@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
 import logging
 import re
+from collections import Counter
 
 from .schemas import UserQuestion, ChatResponse
 from .services.confluence_service import ConfluenceService
@@ -43,7 +44,6 @@ async def startup_event():
         logger.error("Gemini service failed to initialize.")
     logger.info("Confluence and Gemini services initialized (or attempted).")
 
-
 def extract_space_keys_from_query(question: str) -> list[str]:
     found_keys = set()
     matches = SPACE_KEY_PATTERN.findall(question)
@@ -57,86 +57,114 @@ def extract_space_keys_from_query(question: str) -> list[str]:
     return list(found_keys)
 
 def extract_search_terms(question: str) -> dict:
-    normalized_question = question.lower()
-    normalized_question = re.sub(r'[^\w\s-]', '', normalized_question) # Allow hyphens
-    words = normalized_question.split()
+    # Normalize: lowercase and strip basic punctuation for keyword extraction
+    normalized_question_for_keywords = question.lower()
+    normalized_question_for_keywords = re.sub(r'[^\w\s-]', '', normalized_question_for_keywords) # allow hyphens
 
-    keywords = [
+    words = normalized_question_for_keywords.split()
+
+    # Extract individual Keywords: non-stop words, len > 2
+    candidate_keywords = [
         word for word in words
         if word not in STOP_WORDS and len(word) > 2
     ]
 
-    # Use original question for proper noun capitalization
-    potential_proper_nouns = re.findall(r'\b[A-Z][a-zA-Z\-]+(?:\s+[A-Z][a-zA-Z\-]+)*\b', question)
+    # Extract Phrases:
+    # 1. Proper Nouns: Sequences of capitalized words from original question (allowing hyphens)
+    #    This regex tries to capture multi-word capitalized phrases.
+    proper_noun_phrases = re.findall(r'\b[A-Z][a-zA-Z\-]+(?:\s+[A-Z][a-zA-Z\-]+)+\b', question)
 
-    phrases = set(potential_proper_nouns)
+    # 2. N-grams (2-3 words) from normalized question, excluding those made of only stop words
+    #    Using original words list (before lowercasing) to build ngrams to preserve original casing if needed,
+    #    but comparison with stop words will be case-insensitive.
+    #    Actually, using `words` (lowercase, punctuation-stripped) is better for ngram consistency.
 
-    for n in range(2, 4): # Bigrams and Trigrams
+    all_potential_phrases = set(proper_noun_phrases) # Start with proper nouns
+
+    # Generate 2-word and 3-word phrases (bigrams and trigrams) from normalized words
+    for n in range(2, 4):
         for i in range(len(words) - n + 1):
             ngram_words = words[i:i+n]
+            # A phrase is valid if not all its words are stop words
             if not all(word in STOP_WORDS for word in ngram_words):
-                # Check if the phrase isn't just a part of a longer proper noun already captured
-                is_substring_of_proper_noun = False
-                current_ngram_phrase = " ".join(ngram_words)
-                for pn in potential_proper_nouns:
-                    if current_ngram_phrase.lower() in pn.lower() and current_ngram_phrase.lower() != pn.lower() : # avoid matching itself
-                        is_substring_of_proper_noun = True
-                        break
-                if not is_substring_of_proper_noun:
-                    phrases.add(current_ngram_phrase)
+                # And if the phrase doesn't start or end with a stop word (heuristic for better phrases)
+                if ngram_words[0] not in STOP_WORDS and ngram_words[-1] not in STOP_WORDS:
+                    all_potential_phrases.add(" ".join(ngram_words))
 
-    final_phrases = {p for p in phrases if len(p.split()) > 1 and len(p) > 3} # Basic length filter
+    # Filter and select top phrases:
+    # Prioritize longer phrases and ensure they are somewhat substantial.
+    # Remove phrases that are substrings of other, longer selected phrases.
 
-    final_keywords = set(keywords)
-    # Refined logic for removing keywords that are part of phrases
-    for phrase_str in final_phrases:
-        phrase_words = set(phrase_str.lower().split())
-        final_keywords.difference_update(phrase_words) # Remove all words of the phrase from keywords
+    # Sort by length (desc) then alphabetically to have some stability
+    sorted_phrases = sorted(list(all_potential_phrases), key=lambda p: (len(p.split()), len(p)), reverse=True)
+
+    selected_phrases = []
+    max_phrases = 2 # Limit to max 2-3 phrases
+    for phrase in sorted_phrases:
+        is_substring = False
+        for sel_phrase in selected_phrases:
+            if phrase.lower() in sel_phrase.lower():
+                is_substring = True
+                break
+        if not is_substring and len(phrase.split()) > 1 : # Ensure it's a multi-word phrase
+             # Basic length check for the phrase itself too
+            if len(phrase) > 3 : # e.g. avoid "a b" if a and b are single letters
+                selected_phrases.append(phrase)
+        if len(selected_phrases) >= max_phrases:
+            break
+
+    # Final Keywords: non-stop words that are NOT part of the *selected_phrases*
+    final_keywords = set(candidate_keywords)
+    for phrase_str in selected_phrases:
+        # Split phrase into words and remove them from keywords
+        # Use original phrase casing for splitting then lowercase for set operation
+        phrase_words_lower = set(word.lower() for word in phrase_str.split())
+        final_keywords.difference_update(phrase_words_lower)
+
+    # Limit number of keywords too, e.g., top 5 by length or some other metric if too many
+    final_keywords_list = sorted(list(final_keywords), key=len, reverse=True)[:5]
 
     search_terms_dict = {
-        "keywords": sorted(list(final_keywords), key=len, reverse=True),
-        "phrases": sorted(list(final_phrases), key=lambda p: len(p.split()), reverse=True)
+        "keywords": final_keywords_list,
+        "phrases": selected_phrases
     }
-    logger.info(f"Extracted search terms: {search_terms_dict}")
+    logger.info(f"Refined - Extracted search terms: {search_terms_dict}")
     return search_terms_dict
 
 def score_paragraph(paragraph_text: str, phrases: list[str], keywords: list[str]) -> int:
+    # ... (same as before)
     score = 0
     para_lower = paragraph_text.lower()
-
     for phrase in phrases:
         if phrase.lower() in para_lower:
             score += 10
             logger.debug(f"Paragraph scored +10 for phrase: '{phrase}'")
-
     found_keywords_in_para = set()
     for keyword in keywords:
         if keyword.lower() in para_lower:
             found_keywords_in_para.add(keyword.lower())
-
     score += len(found_keywords_in_para) * 2
     if found_keywords_in_para:
         logger.debug(f"Paragraph scored +{len(found_keywords_in_para)*2} for keywords: {found_keywords_in_para}")
-
     return score
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(user_question: UserQuestion = Body(...)):
+    # ... (The rest of chat_endpoint remains the same for now)
+    # It already calls extract_search_terms and passes the result to confluence_service
     logger.info(f"Received question: {user_question.question}")
 
     if not confluence_service.confluence or not gemini_service.model:
         raise HTTPException(status_code=503, detail="One or more backend services are unavailable.")
 
     try:
-        # THIS IS THE CRUCIAL ASSIGNMENT
-        search_terms = extract_search_terms(user_question.question)
+        search_terms = extract_search_terms(user_question.question) # This is now the refined version
         extracted_space_keys = extract_space_keys_from_query(user_question.question)
 
-        # This log line caused the error if search_terms was not defined above.
-        logger.info(f"Searching Confluence with terms: {search_terms}, space_keys: {extracted_space_keys}")
+        logger.info(f"Searching Confluence with refined terms: {search_terms}, space_keys: {extracted_space_keys}")
 
         search_results = confluence_service.search_content(
-            search_terms=search_terms, # Correctly passing the dict
+            search_terms=search_terms,
             space_keys=extracted_space_keys if extracted_space_keys else None,
             limit=5
         )
@@ -199,12 +227,12 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
                 if selected_context_parts:
                     context_for_gemini = "\n".join(selected_context_parts)
-                elif search_results: # Fallback if scored paragraphs were too long
+                elif search_results:
                     first_page_content_fallback = confluence_service.get_page_content_by_id(search_results[0].get("id",""))
                     if first_page_content_fallback:
                         context_for_gemini = f"Context from '{search_results[0].get('title', '')}':\n{first_page_content_fallback[:max_context_length*2//3]}"
 
-            elif search_results: # No paragraphs scored > 0
+            elif search_results:
                 logger.info("No paragraphs scored > 0. Using initial content of first result.")
                 first_page_content_fallback = confluence_service.get_page_content_by_id(search_results[0].get("id",""))
                 if first_page_content_fallback:
