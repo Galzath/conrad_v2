@@ -20,12 +20,7 @@ app = FastAPI(
 confluence_service = ConfluenceService()
 gemini_service = GeminiService()
 
-# Define known space acronyms/keys that might be mentioned in user queries
-KNOWN_SPACE_KEYWORDS = {
-    "M2": "M2",
-    "SGP": "SGP",
-    "SF": "SF",
-}
+KNOWN_SPACE_KEYWORDS = {"M2": "M2", "SGP": "SGP", "SF": "SF"}
 SPACE_KEY_PATTERN = re.compile(r'\b(' + '|'.join(re.escape(key) for key in KNOWN_SPACE_KEYWORDS.keys()) + r')\b', re.IGNORECASE)
 
 STOP_WORDS = set([
@@ -42,7 +37,6 @@ STOP_WORDS = set([
 @app.on_event("startup")
 async def startup_event():
     logger.info("Application startup...")
-    # ... (rest of startup is the same)
     if not confluence_service.confluence:
         logger.error("Confluence service failed to initialize.")
     if not gemini_service.model:
@@ -51,27 +45,80 @@ async def startup_event():
 
 
 def extract_space_keys_from_query(question: str) -> list[str]:
-    # ... (same as before)
     found_keys = set()
     matches = SPACE_KEY_PATTERN.findall(question)
     for match in matches:
         for known_key in KNOWN_SPACE_KEYWORDS.keys():
-            if match.upper() == known_key.upper(): 
-                found_keys.add(KNOWN_SPACE_KEYWORDS[known_key]) 
+            if match.upper() == known_key.upper():
+                found_keys.add(KNOWN_SPACE_KEYWORDS[known_key])
                 break
     if found_keys:
         logger.info(f"Extracted space keys: {list(found_keys)}")
     return list(found_keys)
 
-# Definition of the missing function
-def get_query_keywords(question: str) -> set[str]:
-    # Simple keyword extraction: split by space, lowercase.
-    words = re.split(r'\s+', question.lower())
-    # Filter out very short words (e.g., len <= 2) and strip common punctuation.
-    # This helps in getting more meaningful keywords.
-    keywords = {word.strip(",.?!();:'\"") for word in words if len(word.strip(",.?!();:'\"")) > 2}
-    logger.info(f"Extracted keywords from query: {keywords}")
-    return keywords
+def extract_search_terms(question: str) -> dict:
+    normalized_question = question.lower()
+    normalized_question = re.sub(r'[^\w\s-]', '', normalized_question) # Allow hyphens
+    words = normalized_question.split()
+
+    keywords = [
+        word for word in words
+        if word not in STOP_WORDS and len(word) > 2
+    ]
+
+    # Use original question for proper noun capitalization
+    potential_proper_nouns = re.findall(r'\b[A-Z][a-zA-Z\-]+(?:\s+[A-Z][a-zA-Z\-]+)*\b', question)
+
+    phrases = set(potential_proper_nouns)
+
+    for n in range(2, 4): # Bigrams and Trigrams
+        for i in range(len(words) - n + 1):
+            ngram_words = words[i:i+n]
+            if not all(word in STOP_WORDS for word in ngram_words):
+                # Check if the phrase isn't just a part of a longer proper noun already captured
+                is_substring_of_proper_noun = False
+                current_ngram_phrase = " ".join(ngram_words)
+                for pn in potential_proper_nouns:
+                    if current_ngram_phrase.lower() in pn.lower() and current_ngram_phrase.lower() != pn.lower() : # avoid matching itself
+                        is_substring_of_proper_noun = True
+                        break
+                if not is_substring_of_proper_noun:
+                    phrases.add(current_ngram_phrase)
+
+    final_phrases = {p for p in phrases if len(p.split()) > 1 and len(p) > 3} # Basic length filter
+
+    final_keywords = set(keywords)
+    # Refined logic for removing keywords that are part of phrases
+    for phrase_str in final_phrases:
+        phrase_words = set(phrase_str.lower().split())
+        final_keywords.difference_update(phrase_words) # Remove all words of the phrase from keywords
+
+    search_terms_dict = {
+        "keywords": sorted(list(final_keywords), key=len, reverse=True),
+        "phrases": sorted(list(final_phrases), key=lambda p: len(p.split()), reverse=True)
+    }
+    logger.info(f"Extracted search terms: {search_terms_dict}")
+    return search_terms_dict
+
+def score_paragraph(paragraph_text: str, phrases: list[str], keywords: list[str]) -> int:
+    score = 0
+    para_lower = paragraph_text.lower()
+
+    for phrase in phrases:
+        if phrase.lower() in para_lower:
+            score += 10
+            logger.debug(f"Paragraph scored +10 for phrase: '{phrase}'")
+
+    found_keywords_in_para = set()
+    for keyword in keywords:
+        if keyword.lower() in para_lower:
+            found_keywords_in_para.add(keyword.lower())
+
+    score += len(found_keywords_in_para) * 2
+    if found_keywords_in_para:
+        logger.debug(f"Paragraph scored +{len(found_keywords_in_para)*2} for keywords: {found_keywords_in_para}")
+
+    return score
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(user_question: UserQuestion = Body(...)):
@@ -81,28 +128,28 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
         raise HTTPException(status_code=503, detail="One or more backend services are unavailable.")
 
     try:
-        # Now get_query_keywords is defined before this call
-        query_keywords = get_query_keywords(user_question.question)
+        # THIS IS THE CRUCIAL ASSIGNMENT
+        search_terms = extract_search_terms(user_question.question)
         extracted_space_keys = extract_space_keys_from_query(user_question.question)
 
+        # This log line caused the error if search_terms was not defined above.
         logger.info(f"Searching Confluence with terms: {search_terms}, space_keys: {extracted_space_keys}")
 
         search_results = confluence_service.search_content(
-            query=user_question.question, 
+            search_terms=search_terms, # Correctly passing the dict
             space_keys=extracted_space_keys if extracted_space_keys else None,
-            limit=3 
+            limit=5
         )
 
-        context_for_gemini = "No specific information found in Confluence that matches your query well." # Default if nothing good is found
+        context_for_gemini = "No specific information found in Confluence that matches your query well."
         source_urls = []
-        
+
         if search_results:
-            logger.info(f"Found {len(search_results)} results. Processing for relevant context...")
             source_urls = [result['url'] for result in search_results]
-            
-            all_relevant_paragraphs = []
-            current_length = 0
-            max_context_length = 15000
+            scored_paragraphs_with_source = []
+
+            page_query_phrases = search_terms.get("phrases", [])
+            page_query_keywords = search_terms.get("keywords", [])
 
             for result in search_results:
                 page_id = result.get("id")
@@ -115,50 +162,57 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
                 page_title = result.get('title', 'Unknown Page')
                 page_url = result.get('url', 'N/A')
-                
-                paragraphs = page_content_full.split('\n\n') 
-                if len(paragraphs) <= 1 and '\n' in page_content_full: 
+
+                paragraphs = page_content_full.split('\n\n')
+                if len(paragraphs) <= 1 and '\n' in page_content_full:
                     paragraphs = page_content_full.split('\n')
 
-                relevant_paragraphs_for_page = []
-                for para in paragraphs:
-                    # Ensure query_keywords is not empty before checking
-                    if query_keywords and any(keyword in para.lower() for keyword in query_keywords):
-                        relevant_paragraphs_for_page.append(para)
-                
-                page_context_contribution = ""
-                if relevant_paragraphs_for_page:
-                    logger.info(f"Found {len(relevant_paragraphs_for_page)} relevant paragraphs in '{page_title}'.")
-                    page_context_contribution = "\n".join(relevant_paragraphs_for_page)
-                else:
-                    logger.info(f"No specific relevant paragraphs in '{page_title}'. Using initial part of content.")
-                    page_context_contribution = page_content_full[:1500] 
+                for para_text in paragraphs:
+                    if not para_text.strip(): continue
 
-                content_header = f"Context from '{page_title}' (URL: {page_url}):\n"
-                
-                if current_length + len(content_header) + len(page_context_contribution) > max_context_length:
-                    remaining_chars = max_context_length - current_length - len(content_header)
-                    if remaining_chars > 0:
-                        all_relevant_paragraphs.append(f"{content_header}{page_context_contribution[:remaining_chars]}\n---")
-                        current_length += len(content_header) + remaining_chars + len("\n---")
-                    logger.info(f"Overall context length limit reached. Truncated content from {page_title}.")
-                    break 
-                else:
-                    all_relevant_paragraphs.append(f"{content_header}{page_context_contribution}\n---")
-                    current_length += len(content_header) + len(page_context_contribution) + len("\n---")
+                    score = score_paragraph(para_text, page_query_phrases, page_query_keywords)
+                    if score > 0:
+                        scored_paragraphs_with_source.append((score, para_text, page_title, page_url))
 
-            if all_relevant_paragraphs:
-                context_for_gemini = "\n".join(all_relevant_paragraphs)
-            elif search_results: 
-                context_for_gemini = "Found some documents in Confluence but could not extract relevant segments or content."
-                logger.warning("Content extraction from Confluence results yielded no usable segments.")
-        
+            if scored_paragraphs_with_source:
+                scored_paragraphs_with_source.sort(key=lambda x: x[0], reverse=True)
+                logger.info(f"Found {len(scored_paragraphs_with_source)} relevant paragraphs. Top scores: {[s[0] for s in scored_paragraphs_with_source[:3]]}")
+
+                selected_context_parts = []
+                current_length = 0
+                max_context_length = 15000
+
+                for score, para_text, p_title, p_url in scored_paragraphs_with_source:
+                    content_header = f"Context from '{p_title}' (URL: {p_url}, Relevance Score: {score}):\n"
+                    full_snippet = f"{content_header}{para_text}\n---"
+
+                    if current_length + len(full_snippet) <= max_context_length:
+                        selected_context_parts.append(full_snippet)
+                        current_length += len(full_snippet)
+                    else:
+                        remaining_space = max_context_length - current_length
+                        if remaining_space > len(content_header) + 50:
+                            truncated_para_text_len = remaining_space - len(content_header) - len("\n---")
+                            truncated_snippet = f"{content_header}{para_text[:truncated_para_text_len]}\n---"
+                            selected_context_parts.append(truncated_snippet)
+                        break
+
+                if selected_context_parts:
+                    context_for_gemini = "\n".join(selected_context_parts)
+                elif search_results: # Fallback if scored paragraphs were too long
+                    first_page_content_fallback = confluence_service.get_page_content_by_id(search_results[0].get("id",""))
+                    if first_page_content_fallback:
+                        context_for_gemini = f"Context from '{search_results[0].get('title', '')}':\n{first_page_content_fallback[:max_context_length*2//3]}"
+
+            elif search_results: # No paragraphs scored > 0
+                logger.info("No paragraphs scored > 0. Using initial content of first result.")
+                first_page_content_fallback = confluence_service.get_page_content_by_id(search_results[0].get("id",""))
+                if first_page_content_fallback:
+                     context_for_gemini = f"Context from '{search_results[0].get('title', '')}':\n{first_page_content_fallback[:max_context_length*2//3]}"
+
         logger.info(f"Final context for Gemini (first 300 chars): {context_for_gemini[:300]}...")
-        logger.info(f"Total context length for Gemini: {len(context_for_gemini)} chars.")
-
         ai_answer = gemini_service.generate_response(user_question.question, context_for_gemini)
 
-        # ... (rest of the endpoint is the same)
         if ai_answer.startswith("Error:"):
             return ChatResponse(answer=ai_answer, source_urls=source_urls)
         return ChatResponse(answer=ai_answer, source_urls=source_urls)
@@ -171,10 +225,8 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
 @app.get("/health", summary="Health Check")
 async def health_check():
-    # ... (same as before)
     confluence_status = "initialized" if confluence_service.confluence else "error_initializing"
     gemini_status = "initialized" if gemini_service.model else "error_initializing"
-    
     if confluence_service.confluence and gemini_service.model:
         return {"status": "ok", "confluence_service": confluence_status, "gemini_service": gemini_status}
     else:
