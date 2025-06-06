@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+requests
+google-generativeai
+python-dotenv
+atlassian-python-api
+pydantic
+beautifulsoup4
