@@ -18,7 +18,7 @@ class GeminiService:
             # Initialize the GenerativeModel - specify the model name, e.g., 'gemini-pro'
             # For text-only input, use 'gemini-pro'
             # For text-and-image input, use 'gemini-pro-vision'
-            self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            self.model = genai.GenerativeModel('gemini-pro')
             logger.info("Successfully configured Gemini API and initialized the model.")
         except Exception as e:
             logger.error(f"Failed to initialize Gemini Service: {e}")
