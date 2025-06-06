@@ -15,17 +15,32 @@ class GeminiService:
                 raise ValueError("Gemini API Key not configured.")
 
             genai.configure(api_key=settings.GEMINI_API_KEY)
-            # Updated model name
-            self.model = genai.GenerativeModel('gemini-1.0-pro-latest')
-            logger.info(f"Successfully configured Gemini API and initialized the model: 'gemini-1.0-pro-latest'.")
+
+            # Set the model permanently based on user selection from the list.
+            # The previous step (listing models) used 'gemini-1.5-flash-latest' as the trial model
+            # after the list was printed. User confirms this choice.
+            model_name_to_use = 'gemini-1.5-flash-latest'
+
+            self.model = genai.GenerativeModel(model_name_to_use)
+            logger.info(f"Successfully configured Gemini API and initialized the model: '{model_name_to_use}'.")
+
         except Exception as e:
-            logger.error(f"Failed to initialize Gemini Service: {e}")
+            # This will catch errors if 'gemini-1.5-flash-latest' is still problematic
+            # (e.g., not found for v1beta, permissions, etc.)
+            logger.error(f"Failed to initialize Gemini Service with model '{model_name_to_use}': {e}")
             self.model = None
 
     def generate_response(self, user_question: str, confluence_context: str) -> str:
         if not self.model:
             logger.error("Gemini model not initialized. Cannot generate response.")
             return "Error: The AI model is currently unavailable. Please try again later."
+
+        # For logging, use the model name that was attempted during initialization.
+        # If self.model exists, it means initialization with model_name_to_use (in __init__) was successful.
+        # However, self.model object itself might not directly expose the "friendly name" like "gemini-1.5-flash-latest"
+        # if it resolves to a more specific versioned name.
+        # The log in __init__ is the most reliable for what was *intended*.
+        # For this call log, it's okay to assume the intended model is what's active.
 
         prompt = f"""
 Eres Conrad, un asistente virtual experto en la base de conocimientos de nuestra empresa almacenada en Confluence.
@@ -40,7 +55,8 @@ Contexto de Confluence:
 Respuesta:
 """
 
-        logger.info(f"Sending prompt to Gemini (model: 'gemini-1.0-pro-latest'): {prompt[:200]}...")
+        logger.info(f"Sending prompt to Gemini (using configured model, intended: 'gemini-1.5-flash-latest'): {prompt[:200]}...")
+
 
         try:
             response = self.model.generate_content(prompt)
@@ -67,9 +83,9 @@ if __name__ == "__main__":
     if not settings.GEMINI_API_KEY or "YOUR_GEMINI_API_KEY" in settings.GEMINI_API_KEY:
         print("Gemini API key not configured. Please set it in .env")
     else:
-        gemini_service = GeminiService()
+        gemini_service = GeminiService() # Model initialization logged here
         if gemini_service.model:
-            print(f"GeminiService initialized with model: {gemini_service.model.model_name}") # Check actual model name if possible
+            print(f"GeminiService initialized (model intended: 'gemini-1.5-flash-latest').")
             test_question = "¿Cómo creo una página en Confluence?"
             test_context = "Context from 'Crear Páginas' (URL: example.com/crear, Relevance Score: 10):\nPara crear una página en Confluence, ve al espacio deseado, haz clic en el botón 'Crear' en la parte superior y selecciona 'Página'. Luego, puedes añadir un título y contenido.\n---"
 
@@ -77,4 +93,4 @@ if __name__ == "__main__":
             answer = gemini_service.generate_response(test_question, test_context)
             print(f"Gemini's Answer:\n{answer}")
         else:
-            print("Could not initialize GeminiService.")
+            print("Could not initialize GeminiService. Check logs for errors.")
