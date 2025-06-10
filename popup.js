@@ -4,23 +4,35 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatMessages = document.getElementById('chat-messages');
     const loadingIndicator = document.getElementById('loading-indicator');
     const errorMessage = document.getElementById('error-message');
+    const clearChatButton = document.getElementById('clear-chat-button'); // Added constant
+
+    let chatHistory = []; // Initialize chatHistory array
 
     // Apply Dark Mode theme based on preference
     chrome.storage.local.get(['darkMode'], (items) => {
         if (chrome.runtime.lastError) {
             console.error("Error loading dark mode setting:", chrome.runtime.lastError.message);
-            // Default to light mode or do nothing, letting CSS defaults apply
             return;
         }
-        const isDarkMode = !!items.darkMode;
-        if (isDarkMode) {
+        if (items.darkMode) {
             document.body.classList.add('dark-mode');
         } else {
-            document.body.classList.remove('dark-mode'); // Ensure it's removed if not set or false
+            document.body.classList.remove('dark-mode');
         }
     });
 
-    function addMessageToChat(text, sender, sourceUrls = []) {
+    // Saves the current chat history to sessionStorage
+    function saveChatHistory() {
+        try {
+            sessionStorage.setItem('conradChatHistory', JSON.stringify(chatHistory));
+            console.log("Chat history saved to sessionStorage.");
+        } catch (e) {
+            console.error("Error saving chat history to sessionStorage:", e);
+        }
+    }
+
+    // Renders a message to the chat DOM
+    function renderMessage(text, sender, sourceUrls = []) {
         const messageDiv = document.createElement('div');
         messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'conrad-message');
 
@@ -34,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sourceUrls.forEach((url, index) => {
                 const link = document.createElement('a');
                 link.href = url;
-                link.textContent = `Fuente ${index + 1}`; // Localized "Source"
+                link.textContent = `Fuente ${index + 1}`;
                 link.target = '_blank';
                 sourcesDiv.appendChild(link);
             });
@@ -43,23 +55,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // Adds a message to chat history, renders it, and saves history
+    function addMessageToChat(text, sender, sourceUrls = []) {
+        chatHistory.push({ text, sender, sourceUrls });
+        renderMessage(text, sender, sourceUrls);
+        saveChatHistory(); // <-- Call saveChatHistory here
 
         if (sender === 'user') {
             messageInput.value = '';
-            messageInput.focus(); // Return focus after sending
+            messageInput.focus();
         }
     }
+
+    // Loads chat history from sessionStorage and renders it
+    function loadChatHistory() {
+        const storedHistory = sessionStorage.getItem('conradChatHistory');
+        if (storedHistory) {
+            try {
+                const parsedHistory = JSON.parse(storedHistory);
+                if (Array.isArray(parsedHistory)) {
+                    chatHistory = parsedHistory;
+                    chatHistory.forEach(message => {
+                        renderMessage(message.text, message.sender, message.sourceUrls);
+                    });
+                    console.log("Chat history loaded from sessionStorage.");
+                } else {
+                    console.error("Stored chat history is not an array:", parsedHistory);
+                    chatHistory = [];
+                }
+            } catch (e) {
+                console.error("Error parsing chat history from sessionStorage:", e);
+                chatHistory = [];
+            }
+        }
+    }
+
+    loadChatHistory();
 
     async function handleSendMessage() {
         const inputText = messageInput.value.trim();
         if (inputText === '') {
-            messageInput.focus(); // Focus if trying to send empty
+            messageInput.focus();
             return;
         }
 
-        addMessageToChat(inputText, 'user'); // This will also focus input due to its internal logic
+        addMessageToChat(inputText, 'user');
 
-        loadingIndicator.textContent = "Conrad está escribiendo..."; // Localized loading text
+        loadingIndicator.textContent = "Conrad está escribiendo...";
         loadingIndicator.style.display = 'block';
         errorMessage.style.display = 'none';
         errorMessage.textContent = '';
@@ -67,11 +111,11 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.get(['confluenceUrl', 'geminiKey'], async (items) => {
             try {
                 if (!items.confluenceUrl || !items.geminiKey) {
-                    errorMessage.textContent = 'Configuración incompleta. Por favor, ve a Configuración.'; // Localized config missing
+                    errorMessage.textContent = 'Configuración incompleta. Por favor, ve a Configuración.';
                     errorMessage.classList.add('error-style');
                     errorMessage.style.display = 'block';
                     loadingIndicator.style.display = 'none';
-                    messageInput.focus(); // Focus on config error
+                    messageInput.focus();
                     return;
                 }
 
@@ -94,11 +138,13 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (error) {
                 console.error("Fetch error:", error);
                 loadingIndicator.style.display = 'none';
-                errorMessage.textContent = 'Error de red o backend de Conrad no accesible.'; // Localized network error
+                errorMessage.textContent = 'Error de red o backend de Conrad no accesible.';
                 errorMessage.classList.add('error-style');
                 errorMessage.style.display = 'block';
             } finally {
-                messageInput.focus(); // Ensure focus after API call attempt
+                if (document.activeElement !== messageInput) {
+                    messageInput.focus();
+                }
             }
         });
     }
@@ -111,44 +157,68 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initial logic for welcome/configuration messages
-    chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
-        if (chrome.runtime.lastError) {
-            console.error("Error loading settings for initial message:", chrome.runtime.lastError.message);
-            // Potentially show a generic error, but for now, do nothing specific if storage fails here
-            return;
-        }
-
-        const isConfigured = items.confluenceUrl && items.geminiKey;
-        const isChatEmpty = chatMessages.children.length === 0;
-
-        if (isChatEmpty) {
+    if (chatHistory.length === 0) {
+        chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
+            if (chrome.runtime.lastError) {
+                console.error("Error loading settings for initial message:", chrome.runtime.lastError.message);
+                return;
+            }
+            const isConfigured = items.confluenceUrl && items.geminiKey;
             if (isConfigured) {
-                // Settings ARE CONFIGURED and chat is empty: Show welcome bubble
                 addMessageToChat("¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?", 'conrad');
-                errorMessage.style.display = 'none'; // Ensure no other message is showing
-                errorMessage.textContent = '';
             } else {
-                // Settings ARE MISSING and chat is empty: Show "Configuración incompleta..." in errorMessage (neutral style)
                 errorMessage.textContent = "Configuración incompleta. Por favor, ve a Configuración.";
-                errorMessage.classList.remove('error-style'); // Ensure neutral styling
-                errorMessage.style.color = ''; // Reset direct styles if any
+                errorMessage.classList.remove('error-style');
+                errorMessage.style.color = '';
                 errorMessage.style.backgroundColor = '';
                 errorMessage.style.display = 'block';
             }
-        }
-        // If chat is NOT empty, no automatic message is shown by DOMContentLoaded.
-    });
+        });
+    }
 
-    messageInput.focus(); // Set initial focus
+    messageInput.focus();
 
-    // Clear "Configuración incompleta..." from errorMessage if user starts typing
     messageInput.addEventListener('input', () => {
         const currentMessage = errorMessage.textContent;
-        // Only clear the specific neutral message from initial load
         if (currentMessage === "Configuración incompleta. Por favor, ve a Configuración." && !errorMessage.classList.contains('error-style')) {
             errorMessage.style.display = 'none';
             errorMessage.textContent = '';
         }
     });
+
+    // Event listener for the Clear Chat button
+    if (clearChatButton) {
+        clearChatButton.addEventListener('click', () => {
+            chatHistory = []; // Clear the global JS array
+            sessionStorage.removeItem('conradChatHistory'); // Clear from sessionStorage
+            chatMessages.innerHTML = ''; // Clear the DOM display
+            console.log("Chat history cleared.");
+
+            // Reset error message display before showing potential new message
+            errorMessage.style.display = 'none';
+            errorMessage.textContent = '';
+            errorMessage.classList.remove('error-style');
+
+            // Optionally, re-display initial welcome message or config status
+            chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
+                if (chrome.runtime.lastError) {
+                    console.error("Error loading settings for initial message after clear:", chrome.runtime.lastError.message);
+                    return;
+                }
+                const isConfigured = items.confluenceUrl && items.geminiKey;
+                if (isConfigured) {
+                    // Call addMessageToChat to add welcome and save it (as it's a new session start)
+                    addMessageToChat("¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?", 'conrad');
+                } else {
+                    errorMessage.textContent = "Configuración incompleta. Por favor, ve a Configuración.";
+                    // Ensure neutral styling for config message
+                    errorMessage.classList.remove('error-style');
+                    errorMessage.style.color = '';
+                    errorMessage.style.backgroundColor = '';
+                    errorMessage.style.display = 'block';
+                }
+            });
+            messageInput.focus();
+        });
+    }
 });
