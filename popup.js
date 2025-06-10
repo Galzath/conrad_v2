@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Saves the current chat history to sessionStorage
     function saveChatHistory() {
+
         console.log("saveChatHistory: Attempting to save. Current chatHistory:", JSON.parse(JSON.stringify(chatHistory))); // Deep copy for logging
         try {
             const jsonHistory = JSON.stringify(chatHistory);
