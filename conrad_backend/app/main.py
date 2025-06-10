@@ -76,15 +76,16 @@ def extract_search_terms(question: str) -> dict:
     candidate_keywords = [word for word in words if word not in STOP_WORDS and len(word) > 2]
     proper_noun_phrases = re.findall(r'\b[A-Z][a-zA-Z\-]+(?:\s+[A-Z][a-zA-Z\-]+)+\b', question)
     all_potential_phrases = set(proper_noun_phrases)
-    for n in range(2, 4):
+    for n in range(2, 5): # Include 4-grams
         for i in range(len(words) - n + 1):
             ngram_words = words[i:i+n]
+            # Ensure the phrase is not all stop words and at least one word is not a stop word
             if not all(word in STOP_WORDS for word in ngram_words) and \
-               ngram_words[0] not in STOP_WORDS and ngram_words[-1] not in STOP_WORDS:
+               any(word not in STOP_WORDS for word in ngram_words):
                 all_potential_phrases.add(" ".join(ngram_words))
     sorted_phrases = sorted(list(all_potential_phrases), key=lambda p: (len(p.split()), len(p)), reverse=True)
     selected_phrases = []
-    max_phrases = 2
+    max_phrases = 4 # Increased max_phrases
     for phrase in sorted_phrases:
         is_substring = any(phrase.lower() in sel_phrase.lower() for sel_phrase in selected_phrases)
         if not is_substring and len(phrase.split()) > 1 and len(phrase) > 3:
@@ -95,7 +96,7 @@ def extract_search_terms(question: str) -> dict:
     for phrase_str in selected_phrases:
         phrase_words_lower = set(word.lower() for word in phrase_str.split())
         final_keywords.difference_update(phrase_words_lower)
-    final_keywords_list = sorted(list(final_keywords), key=len, reverse=True)[:5]
+    final_keywords_list = sorted(list(final_keywords), key=len, reverse=True)[:7] # Increased keyword limit
     search_terms_dict = {"keywords": final_keywords_list, "phrases": selected_phrases}
     logger.info(f"Refined - Extracted search terms: {search_terms_dict}")
     return search_terms_dict
@@ -110,7 +111,7 @@ def score_paragraph(paragraph_text: str, phrases: list[str], keywords: list[str]
     for keyword in keywords:
         if keyword.lower() in para_lower:
             found_keywords_in_para.add(keyword.lower())
-    score += len(found_keywords_in_para) * 2
+    score += len(found_keywords_in_para) * 3 # Changed keyword score from 2 to 3
     # Removed debug logging from here for brevity, can be re-added if needed
     return score
 
