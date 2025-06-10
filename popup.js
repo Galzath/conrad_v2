@@ -5,6 +5,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingIndicator = document.getElementById('loading-indicator');
     const errorMessage = document.getElementById('error-message');
 
+    // Apply Dark Mode theme based on preference
+    chrome.storage.local.get(['darkMode'], (items) => {
+        if (chrome.runtime.lastError) {
+            console.error("Error loading dark mode setting:", chrome.runtime.lastError.message);
+            // Default to light mode or do nothing, letting CSS defaults apply
+            return;
+        }
+        const isDarkMode = !!items.darkMode;
+        if (isDarkMode) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode'); // Ensure it's removed if not set or false
+        }
+    });
+
     function addMessageToChat(text, sender, sourceUrls = []) {
         const messageDiv = document.createElement('div');
         messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'conrad-message');
@@ -97,22 +112,29 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial check for settings and set focus
     chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
         if (!items.confluenceUrl || !items.geminiKey) {
-            if (chatMessages.children.length === 0) {
-                errorMessage.textContent = 'Welcome! Please configure Confluence URL and Gemini API Key in Settings to get started.';
-                errorMessage.classList.remove('error-style');
+            if (chatMessages.children.length === 0) { // Only show if chat is empty
+                errorMessage.textContent = "¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?";
+                errorMessage.classList.remove('error-style'); // Ensure neutral styling
+                // Clearing direct styles just in case, though class removal should be enough
+                errorMessage.style.color = '';
+                errorMessage.style.backgroundColor = '';
                 errorMessage.style.display = 'block';
             }
         } else {
+            // Optional: If settings ARE found and chat is empty, one could add a different welcome message
+            // For now, we only show a special message if settings are MISSING.
             if (chatMessages.children.length === 0) {
-                // Optional welcome message
+                 // Example: addMessageToChat("Conrad is ready. Ask me anything!", "conrad");
             }
         }
     });
 
     messageInput.focus(); // Set initial focus
 
+    // Clear welcome/config message if user starts typing
     messageInput.addEventListener('input', () => {
-        if (errorMessage.textContent.startsWith('Welcome!') || errorMessage.textContent.startsWith('Configuration missing')) {
+        const currentMessage = errorMessage.textContent;
+        if (currentMessage.startsWith('¡Hola! Soy Conrad') || currentMessage.startsWith('Configuration missing')) {
             errorMessage.style.display = 'none';
             errorMessage.textContent = '';
         }
