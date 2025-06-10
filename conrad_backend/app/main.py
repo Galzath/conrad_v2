@@ -288,124 +288,126 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
     current_session_id = user_question.session_id
     proceed_as_new_question = True # Flag to control flow
 
-    # A. Handling Follow-up Request (User's answer to clarification)
-    if current_session_id and (user_question.clarification_response or user_question.selected_option_id):
-        logger.info(f"Handling follow-up for session ID: {current_session_id}")
-        retrieved_session_data = get_session(current_session_id)
+    try: # ADDED TRY HERE
+        # A. Handling Follow-up Request (User's answer to clarification)
+        if current_session_id and (user_question.clarification_response or user_question.selected_option_id):
+            logger.info(f"Handling follow-up for session ID: {current_session_id}")
+            retrieved_session_data = get_session(current_session_id)
 
-        if retrieved_session_data and retrieved_session_data.conversation_step == "awaiting_clarification_response":
-            logger.info(f"Valid session found for {current_session_id}. Processing clarification response.")
-            proceed_as_new_question = False # We are processing a clarification response
+            if retrieved_session_data and retrieved_session_data.conversation_step == "awaiting_clarification_response":
+                logger.info(f"Valid session found for {current_session_id}. Processing clarification response.")
+                proceed_as_new_question = False # We are processing a clarification response
 
-            original_question_text = retrieved_session_data.original_question
-            search_results_from_session = retrieved_session_data.initial_search_results
+                original_question_text = retrieved_session_data.original_question
+                search_results_from_session = retrieved_session_data.initial_search_results
 
-            refined_search_results = []
+                refined_search_results = []
 
-            if user_question.selected_option_id:
-                logger.info(f"User selected option ID: {user_question.selected_option_id}")
-                for result in search_results_from_session:
-                    if result.get("id") == user_question.selected_option_id:
-                        refined_search_results.append(result)
-                        logger.info(f"Prioritizing result based on selected_option_id: {result.get('title')}")
-                        break # Found the selected option
-            # else if user_question.clarification_response:
-                # TODO: Implement free-text clarification response handling (more complex)
-                # For now, if no selected_option_id, we might just use all initial_search_results
-                # or try a naive filtering based on the text.
-                # logger.info(f"User provided free-text clarification: {user_question.clarification_response}")
-                # This part is complex: requires re-evaluating results or new search.
-                # For this version, we'll fall back to using initial results if no option selected.
+                if user_question.selected_option_id:
+                    logger.info(f"User selected option ID: {user_question.selected_option_id}")
+                    for result in search_results_from_session:
+                        if result.get("id") == user_question.selected_option_id:
+                            refined_search_results.append(result)
+                            logger.info(f"Prioritizing result based on selected_option_id: {result.get('title')}")
+                            break # Found the selected option
+                # else if user_question.clarification_response:
+                    # TODO: Implement free-text clarification response handling (more complex)
+                    # For now, if no selected_option_id, we might just use all initial_search_results
+                    # or try a naive filtering based on the text.
+                    # logger.info(f"User provided free-text clarification: {user_question.clarification_response}")
+                    # This part is complex: requires re-evaluating results or new search.
+                    # For this version, we'll fall back to using initial results if no option selected.
 
-            if not refined_search_results: # Fallback if selected_option_id didn't yield a specific result
-                logger.warning(f"No specific result refined for session {current_session_id}, using all initial results from session.")
-                refined_search_results = search_results_from_session
+                if not refined_search_results: # Fallback if selected_option_id didn't yield a specific result
+                    logger.warning(f"No specific result refined for session {current_session_id}, using all initial results from session.")
+                    refined_search_results = search_results_from_session
 
-            # Assemble context from these (potentially refined) search_results
-            search_terms_from_session = retrieved_session_data.extracted_terms
-            context_for_gemini, unique_source_urls = _build_context_from_search_results(
-                refined_search_results,
-                search_terms_from_session.get("phrases", []),
-                search_terms_from_session.get("keywords", []),
-                max_context_length
+                # Assemble context from these (potentially refined) search_results
+                search_terms_from_session = retrieved_session_data.extracted_terms
+                context_for_gemini, unique_source_urls = _build_context_from_search_results(
+                    refined_search_results,
+                    search_terms_from_session.get("phrases", []),
+                    search_terms_from_session.get("keywords", []),
+                    max_context_length
+                )
+
+                if not context_for_gemini or context_for_gemini.startswith("No se encontró información"):
+                     logger.warning(f"Context for Gemini is empty or default after clarification for session {current_session_id}.")
+                     # Provide a more specific message if context is still poor after clarification
+                     context_for_gemini = "Aunque intentamos aclarar, no se encontró información específica en Confluence para su consulta refinada."
+
+
+                ai_answer = gemini_service.generate_response(original_question_text, context_for_gemini)
+                delete_session(current_session_id)
+                logger.info(f"Session {current_session_id} deleted after processing clarification.")
+                return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None) # Session is complete
+
+            else:
+                if retrieved_session_data:
+                    logger.warning(f"Session {current_session_id} found, but not awaiting clarification (step: {retrieved_session_data.conversation_step}). Treating as new question.")
+                    delete_session(current_session_id) # Clean up invalid state session
+                else:
+                    logger.warning(f"Session ID {current_session_id} provided by user, but no active session found. Treating as new question.")
+                # proceed_as_new_question remains True
+
+        # B. Handling New Question (or if follow-up processing decided to treat as new)
+        if proceed_as_new_question:
+            logger.info(f"Processing as new question: {user_question.question}")
+            extracted_terms = extract_search_terms(user_question.question)
+            extracted_space_keys = extract_space_keys_from_query(user_question.question)
+            
+            logger.info(f"Searching Confluence with terms: {extracted_terms}, space_keys: {extracted_space_keys}")
+            initial_search_results = confluence_service.search_content(
+                search_terms=extracted_terms,
+                space_keys=extracted_space_keys if extracted_space_keys else None,
+                limit=10 # Increased limit slightly for better clarification options
             )
 
-            if not context_for_gemini or context_for_gemini.startswith("No se encontró información"):
-                 logger.warning(f"Context for Gemini is empty or default after clarification for session {current_session_id}.")
-                 # Provide a more specific message if context is still poor after clarification
-                 context_for_gemini = "Aunque intentamos aclarar, no se encontró información específica en Confluence para su consulta refinada."
+            if initial_search_results:
+                # Attempt to generate clarification questions
+                combined_query_terms = list(extracted_terms.get("keywords", [])) + list(extracted_terms.get("phrases", []))
+                clarification_details = generate_clarification_from_results(initial_search_results, combined_query_terms)
 
+                if clarification_details:
+                    new_session_id = create_new_session_id()
+                    logger.info(f"Clarification needed. Creating new session: {new_session_id}")
 
-            ai_answer = gemini_service.generate_response(original_question_text, context_for_gemini)
-            delete_session(current_session_id)
-            logger.info(f"Session {current_session_id} deleted after processing clarification.")
-            return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None) # Session is complete
+                    session_to_save = SessionData(
+                        original_question=user_question.question,
+                        extracted_terms=extracted_terms, # Store the dict directly
+                        initial_search_results=initial_search_results, # Store raw results
+                        clarification_question_asked=clarification_details["question_text"],
+                        clarification_options_provided=clarification_details["options"],
+                        conversation_step="awaiting_clarification_response",
+                        timestamp=time.time()
+                    )
+                    save_session(new_session_id, session_to_save)
 
-        else:
-            if retrieved_session_data:
-                logger.warning(f"Session {current_session_id} found, but not awaiting clarification (step: {retrieved_session_data.conversation_step}). Treating as new question.")
-                delete_session(current_session_id) # Clean up invalid state session
-            else:
-                logger.warning(f"Session ID {current_session_id} provided by user, but no active session found. Treating as new question.")
-            # proceed_as_new_question remains True
+                    return ChatResponse(
+                        answer="", # No direct answer when clarification is needed
+                        session_id=new_session_id,
+                        needs_clarification=True,
+                        clarification_question_text=clarification_details["question_text"],
+                        clarification_options=clarification_details["options"]
+                    )
 
-    # B. Handling New Question (or if follow-up processing decided to treat as new)
-    if proceed_as_new_question:
-        logger.info(f"Processing as new question: {user_question.question}")
-        extracted_terms = extract_search_terms(user_question.question)
-        extracted_space_keys = extract_space_keys_from_query(user_question.question)
-
-        logger.info(f"Searching Confluence with terms: {extracted_terms}, space_keys: {extracted_space_keys}")
-        initial_search_results = confluence_service.search_content(
-            search_terms=extracted_terms,
-            space_keys=extracted_space_keys if extracted_space_keys else None,
-            limit=10 # Increased limit slightly for better clarification options
-        )
-
-        if initial_search_results:
-            # Attempt to generate clarification questions
-            combined_query_terms = list(extracted_terms.get("keywords", [])) + list(extracted_terms.get("phrases", []))
-            clarification_details = generate_clarification_from_results(initial_search_results, combined_query_terms)
-
-            if clarification_details:
-                new_session_id = create_new_session_id()
-                logger.info(f"Clarification needed. Creating new session: {new_session_id}")
-                
-                session_to_save = SessionData(
-                    original_question=user_question.question,
-                    extracted_terms=extracted_terms, # Store the dict directly
-                    initial_search_results=initial_search_results, # Store raw results
-                    clarification_question_asked=clarification_details["question_text"],
-                    clarification_options_provided=clarification_details["options"],
-                    conversation_step="awaiting_clarification_response",
-                    timestamp=time.time()
-                )
-                save_session(new_session_id, session_to_save)
-                
-                return ChatResponse(
-                    answer="", # No direct answer when clarification is needed
-                    session_id=new_session_id,
-                    needs_clarification=True,
-                    clarification_question_text=clarification_details["question_text"],
-                    clarification_options=clarification_details["options"]
-                )
-
-        # If no clarification needed, or no search results, proceed to generate response directly
-        context_for_gemini, unique_source_urls = _build_context_from_search_results(
-            initial_search_results if initial_search_results else [],
-            extracted_terms.get("phrases", []),
-            extracted_terms.get("keywords", []),
-            max_context_length
-        )
-        
-        ai_answer = gemini_service.generate_response(user_question.question, context_for_gemini)
-        # No session_id in response if it's a direct answer to a new question without clarification
-        return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
+            # If no clarification needed, or no search results, proceed to generate response directly
+            context_for_gemini, unique_source_urls = _build_context_from_search_results(
+                initial_search_results if initial_search_results else [],
+                extracted_terms.get("phrases", []),
+                extracted_terms.get("keywords", []),
+                max_context_length
+            )
+            
+            ai_answer = gemini_service.generate_response(user_question.question, context_for_gemini)
+            # No session_id in response if it's a direct answer to a new question without clarification
+            return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
 
     # Fallback for any logic error, though ideally all paths are covered.
-    except HTTPException as http_exc:
+    except HTTPException as http_exc: # ALIGNED EXCEPTION BLOCK
+
         raise http_exc # Re-raise to let FastAPI handle it
-    except Exception as e:
+    except Exception as e: # ALIGNED EXCEPTION BLOCK
         logger.error(f"An unexpected error occurred in /chat: {e}", exc_info=True)
         # If a session was created for clarification but an error occurred before returning, delete it.
         # This is a bit broad; might need more specific error handling if a session_id was generated in this try block.
