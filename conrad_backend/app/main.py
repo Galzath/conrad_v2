@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware # <--- IMPORT THIS
 import logging
 import re
 from collections import Counter
@@ -17,6 +18,24 @@ app = FastAPI(
     description="API for Conrad Chatbot using Confluence and Gemini",
     version="0.1.0"
 )
+
+# --- ADD CORS MIDDLEWARE CONFIGURATION HERE ---
+origins = [
+    # In production, you would list your specific Chrome extension ID like:
+    # "chrome-extension://<your_extension_id_here>",
+    # "http://localhost:xxxx", # if you have a local web UI for testing
+    # "http://127.0.0.1:xxxx"
+    "*" # Allows all origins - USE FOR LOCAL DEVELOPMENT ONLY
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"], # <--- ENSURE "OPTIONS" IS PRESENT
+    allow_headers=["*"], # Allows all headers
+)
+# --- END CORS MIDDLEWARE CONFIGURATION ---
 
 confluence_service = ConfluenceService()
 gemini_service = GeminiService()
@@ -73,11 +92,6 @@ def extract_search_terms(question: str) -> dict:
     # 1. Proper Nouns: Sequences of capitalized words from original question (allowing hyphens)
     #    This regex tries to capture multi-word capitalized phrases.
     proper_noun_phrases = re.findall(r'\b[A-Z][a-zA-Z\-]+(?:\s+[A-Z][a-zA-Z\-]+)+\b', question)
-
-    # 2. N-grams (2-3 words) from normalized question, excluding those made of only stop words
-    #    Using original words list (before lowercasing) to build ngrams to preserve original casing if needed,
-    #    but comparison with stop words will be case-insensitive.
-    #    Actually, using `words` (lowercase, punctuation-stripped) is better for ngram consistency.
 
     all_potential_phrases = set(proper_noun_phrases) # Start with proper nouns
 
@@ -243,7 +257,8 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
         if ai_answer.startswith("Error:"):
             return ChatResponse(answer=ai_answer, source_urls=source_urls)
-        return ChatResponse(answer=ai_answer, source_urls=source_urls)
+        return ChatResponse(answer=ai_answer, source_urls=list(set(source_urls))) # Ensure unique URLs
+
 
     except HTTPException as http_exc:
         raise http_exc
@@ -258,4 +273,4 @@ async def health_check():
     if confluence_service.confluence and gemini_service.model:
         return {"status": "ok", "confluence_service": confluence_status, "gemini_service": gemini_status}
     else:
-        return JSONResponse(status_code=503, content={"status": "error", "detail": "Services not fully available."})
+        return JSONResponse(status_code=503, content={"status": "error", "confluence_service": confluence_status, "gemini_service": gemini_status, "detail": "Services not fully available."})
