@@ -405,6 +405,7 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
     # Fallback for any logic error, though ideally all paths are covered.
     except HTTPException as http_exc: # ALIGNED EXCEPTION BLOCK
+
         raise http_exc # Re-raise to let FastAPI handle it
     except Exception as e: # ALIGNED EXCEPTION BLOCK
         logger.error(f"An unexpected error occurred in /chat: {e}", exc_info=True)
