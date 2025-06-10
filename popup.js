@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sourceUrls.forEach((url, index) => {
                 const link = document.createElement('a');
                 link.href = url;
-                link.textContent = `Source ${index + 1}`;
+                link.textContent = `Fuente ${index + 1}`; // Localized "Source"
                 link.target = '_blank';
                 sourcesDiv.appendChild(link);
             });
@@ -58,6 +58,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         addMessageToChat(inputText, 'user'); // This will also focus input due to its internal logic
+
+        loadingIndicator.textContent = "Conrad está escribiendo..."; // Localized loading text
         loadingIndicator.style.display = 'block';
         errorMessage.style.display = 'none';
         errorMessage.textContent = '';
@@ -65,7 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.get(['confluenceUrl', 'geminiKey'], async (items) => {
             try {
                 if (!items.confluenceUrl || !items.geminiKey) {
-                    errorMessage.textContent = 'Configuration missing. Please set Confluence URL and Gemini API Key in Settings.';
+                    errorMessage.textContent = 'Configuración incompleta. Por favor, ve a Configuración.'; // Localized config missing
                     errorMessage.classList.add('error-style');
                     errorMessage.style.display = 'block';
                     loadingIndicator.style.display = 'none';
@@ -92,7 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (error) {
                 console.error("Fetch error:", error);
                 loadingIndicator.style.display = 'none';
-                errorMessage.textContent = 'Network error or Conrad backend not reachable. Ensure it is running on http://127.0.0.1:8000.';
+                errorMessage.textContent = 'Error de red o backend de Conrad no accesible.'; // Localized network error
                 errorMessage.classList.add('error-style');
                 errorMessage.style.display = 'block';
             } finally {
@@ -109,32 +111,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initial check for settings and set focus
+    // Initial logic for welcome/configuration messages
     chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
-        if (!items.confluenceUrl || !items.geminiKey) {
-            if (chatMessages.children.length === 0) { // Only show if chat is empty
-                errorMessage.textContent = "¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?";
+        if (chrome.runtime.lastError) {
+            console.error("Error loading settings for initial message:", chrome.runtime.lastError.message);
+            // Potentially show a generic error, but for now, do nothing specific if storage fails here
+            return;
+        }
+
+        const isConfigured = items.confluenceUrl && items.geminiKey;
+        const isChatEmpty = chatMessages.children.length === 0;
+
+        if (isChatEmpty) {
+            if (isConfigured) {
+                // Settings ARE CONFIGURED and chat is empty: Show welcome bubble
+                addMessageToChat("¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?", 'conrad');
+                errorMessage.style.display = 'none'; // Ensure no other message is showing
+                errorMessage.textContent = '';
+            } else {
+                // Settings ARE MISSING and chat is empty: Show "Configuración incompleta..." in errorMessage (neutral style)
+                errorMessage.textContent = "Configuración incompleta. Por favor, ve a Configuración.";
                 errorMessage.classList.remove('error-style'); // Ensure neutral styling
-                // Clearing direct styles just in case, though class removal should be enough
-                errorMessage.style.color = '';
+                errorMessage.style.color = ''; // Reset direct styles if any
                 errorMessage.style.backgroundColor = '';
                 errorMessage.style.display = 'block';
             }
-        } else {
-            // Optional: If settings ARE found and chat is empty, one could add a different welcome message
-            // For now, we only show a special message if settings are MISSING.
-            if (chatMessages.children.length === 0) {
-                 // Example: addMessageToChat("Conrad is ready. Ask me anything!", "conrad");
-            }
         }
+        // If chat is NOT empty, no automatic message is shown by DOMContentLoaded.
     });
 
     messageInput.focus(); // Set initial focus
 
-    // Clear welcome/config message if user starts typing
+    // Clear "Configuración incompleta..." from errorMessage if user starts typing
     messageInput.addEventListener('input', () => {
         const currentMessage = errorMessage.textContent;
-        if (currentMessage.startsWith('¡Hola! Soy Conrad') || currentMessage.startsWith('Configuration missing')) {
+        // Only clear the specific neutral message from initial load
+        if (currentMessage === "Configuración incompleta. Por favor, ve a Configuración." && !errorMessage.classList.contains('error-style')) {
             errorMessage.style.display = 'none';
             errorMessage.textContent = '';
         }

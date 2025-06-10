@@ -148,6 +148,8 @@ body.options-page {
   word-wrap: break-word;
   line-height: 1.45;
   box-shadow: 0 1px 2px var(--shadow-color);
+  /* Animation for new messages */
+  animation: fadeInSlideUp 0.3s ease-out forwards;
 }
 
 .user-message {
@@ -367,4 +369,16 @@ hr {
 #dark-mode-toggle:focus {
     outline: 1px dotted var(--link-color);
     box-shadow: 0 0 0 0.1rem var(--input-focus-shadow);
+}
+
+/* Keyframes for message animation */
+@keyframes fadeInSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px); /* Start slightly lower */
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
