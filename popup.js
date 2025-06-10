@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
+    console.log("Popup DOMContentLoaded: Script starting.");
     const messageInput = document.getElementById('message-input');
     const sendButton = document.getElementById('send-button');
     const chatMessages = document.getElementById('chat-messages');
@@ -23,11 +24,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Saves the current chat history to sessionStorage
     function saveChatHistory() {
+
+        console.log("saveChatHistory: Attempting to save. Current chatHistory:", JSON.parse(JSON.stringify(chatHistory))); // Deep copy for logging
         try {
-            sessionStorage.setItem('conradChatHistory', JSON.stringify(chatHistory));
-            console.log("Chat history saved to sessionStorage.");
+            const jsonHistory = JSON.stringify(chatHistory);
+            sessionStorage.setItem('conradChatHistory', jsonHistory);
+            console.log("saveChatHistory: Successfully saved to sessionStorage. JSON:", jsonHistory);
         } catch (e) {
-            console.error("Error saving chat history to sessionStorage:", e);
+            console.error("saveChatHistory: Error saving chat history to sessionStorage:", e, "chatHistory state:", chatHistory);
         }
     }
 
@@ -59,9 +63,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Adds a message to chat history, renders it, and saves history
     function addMessageToChat(text, sender, sourceUrls = []) {
+        console.log("addMessageToChat: Adding message:", {text, sender});
         chatHistory.push({ text, sender, sourceUrls });
+        console.log("addMessageToChat: chatHistory after push:", JSON.parse(JSON.stringify(chatHistory)));
         renderMessage(text, sender, sourceUrls);
-        saveChatHistory(); // <-- Call saveChatHistory here
+        saveChatHistory();
 
         if (sender === 'user') {
             messageInput.value = '';
@@ -71,24 +77,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Loads chat history from sessionStorage and renders it
     function loadChatHistory() {
+        console.log("loadChatHistory: Attempting to load history.");
         const storedHistory = sessionStorage.getItem('conradChatHistory');
+        console.log("loadChatHistory: Raw data from sessionStorage:", storedHistory);
+
         if (storedHistory) {
             try {
                 const parsedHistory = JSON.parse(storedHistory);
+                console.log("loadChatHistory: Parsed history from sessionStorage:", parsedHistory);
                 if (Array.isArray(parsedHistory)) {
                     chatHistory = parsedHistory;
+                    console.log("loadChatHistory: Global chatHistory array populated:", JSON.parse(JSON.stringify(chatHistory)));
+
+                    // Clear existing messages before rendering loaded history
+                    chatMessages.innerHTML = ''; // Clear display before rendering loaded history
+
                     chatHistory.forEach(message => {
                         renderMessage(message.text, message.sender, message.sourceUrls);
                     });
-                    console.log("Chat history loaded from sessionStorage.");
+                    console.log("loadChatHistory: Rendered messages from loaded history.");
                 } else {
-                    console.error("Stored chat history is not an array:", parsedHistory);
+                    console.error("loadChatHistory: Stored chat history is not an array. Resetting chatHistory.", parsedHistory);
                     chatHistory = [];
+                    chatMessages.innerHTML = ''; // Ensure display is also cleared
                 }
             } catch (e) {
-                console.error("Error parsing chat history from sessionStorage:", e);
+                console.error("loadChatHistory: Error parsing chat history from sessionStorage:", e, "Raw data:", storedHistory);
                 chatHistory = [];
+                chatMessages.innerHTML = ''; // Ensure display is also cleared
             }
+        } else {
+            console.log("loadChatHistory: No history found in sessionStorage.");
+            // chatHistory remains empty, which is the default.
+            // Display should also be empty if no history.
+            chatMessages.innerHTML = '';
         }
     }
 
