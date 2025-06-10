@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuración de Conrad Chatbot</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="options.js" defer></script>
+</head>
+<body class="options-page">
+  <div id="options-container">
+    <h1>Configuración</h1>
+    <form id="settings-form">
+      <div>
+        <label for="confluence-url">URL de Confluence:</label>
+        <input type="text" id="confluence-url" name="confluence-url">
+      </div>
+      <div>
+        <label for="confluence-username">Usuario de Confluence:</label>
+        <input type="text" id="confluence-username" name="confluence-username">
+      </div>
+      <div>
+        <label for="confluence-token">Token API de Confluence:</label>
+        <input type="password" id="confluence-token" name="confluence-token">
+      </div>
+      <div>
+        <label for="gemini-key">Clave API de Gemini:</label>
+        <input type="password" id="gemini-key" name="gemini-key">
+      </div>
+
+      <hr style="margin: 20px 0;">
+
+      <div class="form-group">
+        <label for="dark-mode-toggle" style="display: inline-block; margin-right: 10px; vertical-align: middle;">Modo Oscuro:</label>
+        <input type="checkbox" id="dark-mode-toggle" name="dark-mode-toggle" style="vertical-align: middle;">
+      </div>
+
+      <hr style="margin: 20px 0;">
+
+      <button type="submit" id="save-button">Guardar Cambios</button>
+    </form>
+    <div id="status-message">
+      <!-- Status messages (e.g., "Settings saved") will be displayed here -->
+    </div>
+  </div>
+</body>
+</html>

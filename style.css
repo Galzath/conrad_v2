@@ -1,0 +1,401 @@
+/* General Reset / Base */
+:root {
+  /* Light Theme (Default) */
+  --body-bg-popup: #f0f0f0;
+  --body-bg-options: #f8f9fa;
+  --container-bg: #ffffff;
+  --text-primary: #212529;
+  --text-secondary: #495057;
+  --text-muted: #6c757d;
+  --border-color: #ced4da;
+  --border-color-strong: #adb5bd;
+  --link-color: #007bff;
+  --link-hover-color: #0056b3;
+  --button-primary-bg: #007bff;
+  --button-primary-text: #ffffff;
+  --button-secondary-bg: #28a745;
+  --button-secondary-text: #ffffff;
+  --button-disabled-bg: #6c757d;
+  --button-disabled-text: #ffffff;
+  --message-user-bg: #007bff;
+  --message-user-text: #ffffff;
+  --message-conrad-bg: #48D1CC; /* Light mode Conrad message background - Teal */
+  --message-conrad-text: #1A1A1A; /* Light mode Conrad message text - Dark Gray/Black */
+  --input-bg: #ffffff;
+  --input-area-bg: #f8f9fa; /* Popup input area */
+  --input-focus-border: #80bdff;
+  --input-focus-shadow: rgba(0,123,255,.25);
+  --status-success-bg: #d4edda;
+  --status-success-text: #155724;
+  --status-success-border: #c3e6cb;
+  --status-error-bg: #f8d7da;
+  --status-error-text: #721c24;
+  --status-error-border: #f5c6cb;
+  --shadow-color: rgba(0,0,0,0.05);
+  --hr-color: #e0e0e0;
+
+  /* Font */
+  --font-family: Arial, Helvetica, sans-serif;
+  --base-font-size: 14px;
+}
+
+body.dark-mode {
+  --body-bg-popup: #1e1e1e; /* Darker background for popup */
+  --body-bg-options: #121212; /* Darkest for options page */
+  --container-bg: #2c2c2c; /* Dark containers */
+  --text-primary: #e0e0e0;
+  --text-secondary: #b0b0b0;
+  --text-muted: #888888;
+  --border-color: #444444;
+  --border-color-strong: #555555;
+  --link-color: #80bfff;
+  --link-hover-color: #a0cfff;
+  --button-primary-bg: #007bff; /* Keeping blue for now, ensure contrast */
+  --button-primary-text: #ffffff;
+  --button-secondary-bg: #28a745; /* Keeping green for now */
+  --button-secondary-text: #ffffff;
+  --button-disabled-bg: #555555;
+  --button-disabled-text: #ababab;
+  --message-user-bg: #0056b3; /* Darker blue */
+  --message-user-text: #e0e0e0;
+  --message-conrad-bg: #208080; /* Dark mode Conrad message background - Dark Teal */
+  --message-conrad-text: #F5F5F5; /* Dark mode Conrad message text - Off-White */
+  --input-bg: #3a3a3a;
+  --input-area-bg: #2c2c2c; /* Popup input area */
+  --input-focus-border: #80bfff; /* Lighter blue for focus */
+  --input-focus-shadow: rgba(128,191,255,.25);
+  --status-success-bg: #2a5c33;
+  --status-success-text: #d4edda;
+  --status-success-border: #306838;
+  --status-error-bg: #6b2128;
+  --status-error-text: #f8d7da;
+  --status-error-border: #7c2930;
+  --shadow-color: rgba(255,255,255,0.03);
+  --hr-color: #444444;
+}
+
+html {
+  font-family: var(--font-family);
+  font-size: var(--base-font-size);
+}
+
+/* Styles specific to the popup window */
+body.popup-body {
+  width: 380px;
+  height: 520px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin:0;
+  padding:0;
+  background-color: var(--body-bg-popup);
+  color: var(--text-primary);
+}
+
+/* Styles specific to the options page */
+body.options-page {
+  width: auto;
+  height: auto;
+  overflow: auto;
+  margin:0;
+  padding:20px;
+  background-color: var(--body-bg-options);
+  color: var(--text-primary);
+}
+
+/* Chat Popup Specific Styles */
+#chat-container {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+#settings-link {
+  text-align: right;
+  margin-bottom: 8px;
+  font-size: 0.9em;
+}
+
+#settings-link a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+#settings-link a:hover, #settings-link a:focus {
+  text-decoration: underline;
+  color: var(--link-hover-color);
+  outline: 1px dotted var(--link-color);
+}
+
+#chat-messages {
+  flex-grow: 1;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-color-strong);
+  border-radius: 4px;
+  background-color: var(--container-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative; /* For pseudo-element positioning */
+}
+
+#chat-messages::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: url('images/conrad_face_bn.png');
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: contain;
+  opacity: 0.3; /* 70% transparency */
+  z-index: -1; /* Behind chat messages */
+  pointer-events: none; /* No interaction with the background image */
+}
+
+.message {
+  padding: 10px 14px;
+  border-radius: 18px;
+  max-width: 85%;
+  word-wrap: break-word;
+  line-height: 1.45;
+  box-shadow: 0 1px 2px var(--shadow-color);
+  /* Animation for new messages */
+  animation: fadeInSlideUp 0.3s ease-out forwards;
+}
+
+.user-message {
+  background-color: var(--message-user-bg);
+  color: var(--message-user-text);
+  align-self: flex-end;
+  border-bottom-right-radius: 6px;
+}
+
+.conrad-message {
+  background-color: var(--message-conrad-bg);
+  color: var(--message-conrad-text);
+  align-self: flex-start;
+  border-bottom-left-radius: 6px;
+}
+
+.message .source-urls {
+  margin-top: 8px;
+  font-size: 0.85em;
+  padding-top: 5px;
+  border-top: 1px solid var(--shadow-color); /* Use shadow or a light border */
+}
+/* Ensure contrast for user message sources if ever used */
+.user-message .source-urls { border-top: 1px solid rgba(255,255,255,0.2); }
+.conrad-message .source-urls { border-top: 1px solid var(--border-color); }
+
+
+.message .source-urls a {
+  color: var(--link-color);
+  text-decoration: none;
+  margin-right: 12px;
+  display: inline-block;
+  padding: 2px 0;
+}
+.message .source-urls a:hover, .message .source-urls a:focus {
+  color: var(--link-hover-color);
+  text-decoration: underline;
+  outline: 1px dotted var(--link-color);
+}
+
+#loading-indicator {
+  text-align: center;
+  padding: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  display: none;
+}
+
+#error-message { /* Used for chat errors and initial welcome message */
+  text-align: center;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  color: var(--text-primary); /* Default color, overridden by .error-style */
+  background-color: transparent; /* Default background */
+  display: none;
+}
+
+#input-area {
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  border-top: 1px solid var(--border-color-strong);
+  background-color: var(--input-area-bg);
+}
+
+#message-input {
+  flex-grow: 1;
+  padding: 10px 15px;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  margin-right: 8px;
+  font-size: 1em;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+}
+#message-input:focus {
+  border-color: var(--input-focus-border);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem var(--input-focus-shadow);
+}
+
+#send-button {
+  padding: 10px 18px;
+  background-color: var(--button-primary-bg);
+  color: var(--button-primary-text);
+  border: none;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 1em;
+  transition: background-color 0.15s ease-in-out;
+}
+#send-button:hover, #send-button:focus {
+  background-color: var(--link-hover-color); /* Using link hover as it's often a darker shade of primary */
+  outline: 1px dotted var(--button-primary-bg);
+}
+#send-button:disabled {
+  background-color: var(--button-disabled-bg);
+  color: var(--button-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Options Page Specific Styles */
+#options-container {
+  padding: 25px;
+  max-width: 600px;
+  margin: 0 auto;
+  background-color: var(--container-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px var(--shadow-color);
+}
+
+#options-container h1 {
+  font-size: 1.8em;
+  margin-bottom: 25px;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+#settings-form div.form-group, /* Target specific divs if needed */
+#settings-form div { /* Keep general for other divs */
+  margin-bottom: 18px;
+}
+
+#settings-form label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+#settings-form input[type="text"],
+#settings-form input[type="password"],
+#settings-form input[type="checkbox"] { /* Added checkbox for consistency if styled later */
+  width: calc(100% - 22px);
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 1em;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  transition: border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+}
+#settings-form input[type="checkbox"] { /* Specific styling for checkbox */
+    width: auto; /* Override width */
+    padding: initial; /* Override padding */
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+#settings-form input[type="text"]:focus,
+#settings-form input[type="password"]:focus {
+  border-color: var(--input-focus-border);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem var(--input-focus-shadow);
+}
+
+#settings-form button {
+  padding: 12px 22px;
+  background-color: var(--button-secondary-bg);
+  color: var(--button-secondary-text);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1.05em;
+  transition: background-color 0.15s ease-in-out;
+}
+#settings-form button:hover, #settings-form button:focus {
+  background-color: var(--link-hover-color); /* Assuming secondary button can use primary link hover */
+  outline: 2px solid var(--button-secondary-bg);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--hr-color);
+}
+
+/* Status messages (shared styles) */
+#status-message,
+.popup-status {
+  padding: 12px 15px;
+  margin-top: 15px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 0.95em;
+  text-align: center;
+}
+
+/* Specific error message style for popup (and options) */
+#error-message.error-style, /* For popup */
+#status-message.error-style /* For options, if JS adds this class */ {
+  background-color: var(--status-error-bg);
+  color: var(--status-error-text);
+  border-color: var(--status-error-border);
+}
+
+/* General success message style - used by options.js */
+#status-message.success-style {
+  background-color: var(--status-success-bg);
+  color: var(--status-success-text);
+  border-color: var(--status-success-border);
+}
+
+/* Ensure the initial welcome/setup message in popup's #error-message is neutral */
+#error-message:not(.error-style) {
+    color: var(--text-muted); /* Use muted text color for neutral messages */
+    background-color: transparent; /* No specific background */
+}
+/* Dark mode toggle styling (basic) */
+.form-group label[for="dark-mode-toggle"] { /* Ensure label is styled */
+    color: var(--text-secondary);
+}
+#dark-mode-toggle {
+    accent-color: var(--link-color); /* Makes the checkbox theme-aware */
+}
+#dark-mode-toggle:focus {
+    outline: 1px dotted var(--link-color);
+    box-shadow: 0 0 0 0.1rem var(--input-focus-shadow);
+}
+
+/* Keyframes for message animation */
+@keyframes fadeInSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px); /* Start slightly lower */
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
