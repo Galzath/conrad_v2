@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Conrad Chatbot Settings</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="options.js" defer></script>
+</head>
+<body class="options-page">
+  <div id="options-container">
+    <h1>Settings</h1>
+    <form id="settings-form">
+      <div>
+        <label for="confluence-url">Confluence URL:</label>
+        <input type="text" id="confluence-url" name="confluence-url">
+      </div>
+      <div>
+        <label for="confluence-username">Confluence Username:</label>
+        <input type="text" id="confluence-username" name="confluence-username">
+      </div>
+      <div>
+        <label for="confluence-token">Confluence API Token:</label>
+        <input type="password" id="confluence-token" name="confluence-token">
+      </div>
+      <div>
+        <label for="gemini-key">Gemini API Key:</label>
+        <input type="password" id="gemini-key" name="gemini-key">
+      </div>
+      <button type="submit" id="save-button">Save Settings</button>
+    </form>
+    <div id="status-message">
+      <!-- Status messages (e.g., "Settings saved") will be displayed here -->
+    </div>
+  </div>
+</body>
+</html>
