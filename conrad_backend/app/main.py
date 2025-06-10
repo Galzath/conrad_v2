@@ -121,8 +121,11 @@ import uuid # Though create_new_session_id from state_manager should be used
 from typing import List, Dict, Any, Optional # Ensure these are at the top if not already
 from .core.state_manager import SessionData, save_session, get_session, delete_session, create_new_session_id
 
+# logger is defined globally at the top of main.py
+
 def _clean_title_for_options(title: str, query_terms_lower: List[str]) -> str:
     """Helper to generate a cleaner option text from a title."""
+    logger.debug(f"_clean_title_for_options: Input title='{title}', query_terms_lower={query_terms_lower}")
     # Remove common suffixes/prefixes (very basic example)
     common_suffixes = ["guide", "documentation", "overview", "document", "manual", "tutorial"]
     # Attempt to remove parts of the title that were in the original query to find distinguishing parts
@@ -190,19 +193,26 @@ def _clean_title_for_options(title: str, query_terms_lower: List[str]) -> str:
         if capitalized_words:
             return " ".join(capitalized_words)
 
-        return title # Fallback if no better option found by cleaning
+        cleaned_text_being_returned = title # Fallback if no better option found by cleaning
+        logger.debug(f"_clean_title_for_options: Output cleaned_text='{cleaned_text_being_returned}'")
+        return cleaned_text_being_returned
 
-    return " ".join(distinguishing_words).capitalize()
+    cleaned_text_being_returned = " ".join(distinguishing_words).capitalize()
+    logger.debug(f"_clean_title_for_options: Output cleaned_text='{cleaned_text_being_returned}'")
+    return cleaned_text_being_returned
 
 
 def generate_clarification_from_results(
     search_results: List[Dict[str, Any]],
     original_query_terms: List[str]
 ) -> Optional[Dict[str, Any]]:
+    logger.debug(f"generate_clarification_from_results: Input search_results_count={len(search_results)}, original_query_terms={original_query_terms}")
 
     if not search_results or len(search_results) < 2:
+        logger.debug("generate_clarification_from_results: No clarification generated, returning None (few results).")
         return None
 
+    logger.debug(f"Processing titles: {[r.get('title') for r in search_results if r.get('title')]}")
     query_terms_lower = [term.lower() for term in original_query_terms]
 
     candidate_options = []
@@ -237,8 +247,11 @@ def generate_clarification_from_results(
     # Now, ensure we have a good number of options.
 
     if not candidate_options:
+        logger.debug("generate_clarification_from_results: No candidate options generated after cleaning and filtering.")
+        logger.debug("generate_clarification_from_results: No clarification generated, returning None.")
         return None
 
+    logger.debug(f"generate_clarification_from_results: Candidate options generated: {candidate_options}")
     # Simplistic way to ensure diversity: if many options have very similar text, group them or pick best.
     # For now, we rely on the _clean_title_for_options and the duplicate check.
 
@@ -259,6 +272,7 @@ def generate_clarification_from_results(
         else:
             break
 
+    logger.debug(f"generate_clarification_from_results: Final options selected: {final_options}")
     if len(final_options) >= 2 and len(final_options) <= 4:
         # Create a summary of original query terms for the question text
         # Take first 2-3 terms for brevity
@@ -268,11 +282,14 @@ def generate_clarification_from_results(
 
         question_text = f"Your query about '{query_context}' returned information on different topics. Which specific area are you interested in?"
 
-        return {
+        clarification_dict_to_return = {
             "question_text": question_text,
             "options": final_options
         }
+        logger.debug(f"generate_clarification_from_results: Returning clarification_details: {clarification_dict_to_return}")
+        return clarification_dict_to_return
 
+    logger.debug("generate_clarification_from_results: No clarification generated, returning None (final options count not met).")
     return None
 
 
@@ -369,8 +386,9 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
                 clarification_details = generate_clarification_from_results(initial_search_results, combined_query_terms)
 
                 if clarification_details:
+                    logger.info(f"Clarification details generated: {clarification_details}") # ADDED LOG
                     new_session_id = create_new_session_id()
-                    logger.info(f"Clarification needed. Creating new session: {new_session_id}")
+                    logger.info(f"Clarification needed. Creating new session: {new_session_id}") # Existing log
 
                     session_to_save = SessionData(
                         original_question=user_question.question,
@@ -383,13 +401,15 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
                     )
                     save_session(new_session_id, session_to_save)
 
-                    return ChatResponse(
+                    response_for_clarification = ChatResponse( # CONSTRUCT RESPONSE FOR LOGGING
                         answer="", # No direct answer when clarification is needed
                         session_id=new_session_id,
                         needs_clarification=True,
                         clarification_question_text=clarification_details["question_text"],
                         clarification_options=clarification_details["options"]
                     )
+                    logger.info(f"Returning ChatResponse for clarification: {response_for_clarification.model_dump_json(indent=2)}") # ADDED LOG
+                    return response_for_clarification
 
             # If no clarification needed, or no search results, proceed to generate response directly
             context_for_gemini, unique_source_urls = _build_context_from_search_results(
@@ -405,7 +425,6 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
     # Fallback for any logic error, though ideally all paths are covered.
     except HTTPException as http_exc: # ALIGNED EXCEPTION BLOCK
-
         raise http_exc # Re-raise to let FastAPI handle it
     except Exception as e: # ALIGNED EXCEPTION BLOCK
         logger.error(f"An unexpected error occurred in /chat: {e}", exc_info=True)
