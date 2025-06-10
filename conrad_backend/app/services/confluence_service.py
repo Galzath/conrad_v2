@@ -113,10 +113,10 @@ class ConfluenceService:
             logger.info("No valid keyword CQL conditions generated.")
             return []
 
-        # If original_phrases were present (meaning this is a fallback), keywords should be ANDed.
-        # If no original_phrases, then this is a primary keyword search, use OR.
-        if original_phrases: # Fallback from phrases: AND keywords
-            main_condition = f"({' AND '.join(keyword_cql_conditions)})"
+        # If original_phrases were present (meaning this is a fallback), keywords should be ORed for a broader search.
+        # If no original_phrases, then this is a primary keyword search, also use OR.
+        if original_phrases: # Fallback from phrases: OR keywords for broader search
+            main_condition = f"({' OR '.join(keyword_cql_conditions)})"
         else: # Primary keyword search: OR keywords
             main_condition = f"({' OR '.join(keyword_cql_conditions)})"
 
