@@ -23,7 +23,7 @@ function saveOptions(e) {
 
     // Basic validation for API keys
     if (!confluenceUrl || !geminiKey) {
-        status.textContent = 'Error: Confluence URL and Gemini API Key are required.';
+        status.textContent = 'Por favor, completa los campos requeridos: URL de Confluence y Clave API de Gemini.'; // Localized validation
         status.classList.add('error-style');
         setTimeout(() => {
             status.textContent = '';
@@ -41,10 +41,10 @@ function saveOptions(e) {
     }, () => {
         if (chrome.runtime.lastError) {
             console.error("Error saving settings:", chrome.runtime.lastError);
-            status.textContent = 'Error saving settings: ' + chrome.runtime.lastError.message;
+            status.textContent = 'Error al guardar. Por favor, revisa los campos.'; // Localized save error
             status.classList.add('error-style');
         } else {
-            status.textContent = 'Settings saved successfully!';
+            status.textContent = '¡Configuración guardada con éxito!'; // Localized save success
             status.classList.add('success-style');
             // Apply dark mode immediately after saving, if changed
             applyDarkModePreference(isDarkMode);
@@ -71,7 +71,7 @@ function loadOptions() {
     chrome.storage.local.get(['confluenceUrl', 'confluenceUsername', 'confluenceToken', 'geminiKey', 'darkMode'], (items) => {
         if (chrome.runtime.lastError) {
             console.error("Error loading settings:", chrome.runtime.lastError);
-            status.textContent = 'Error loading settings: ' + chrome.runtime.lastError.message;
+            status.textContent = 'Error al cargar la configuración.'; // Localized load error
             status.classList.add('error-style');
             return;
         }
