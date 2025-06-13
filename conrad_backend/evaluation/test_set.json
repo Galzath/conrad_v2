@@ -1,0 +1,20 @@
+[
+  {
+    "question_id": "q1",
+    "question_text": "¿Cómo creo una nueva página en Confluence?",
+    "expected_confluence_page_ids": ["PAGE_ID_CREATE_PAGE_GUIDE"],
+    "ideal_answer_keywords": ["crear", "página", "botón", "espacio", "título"]
+  },
+  {
+    "question_id": "q2",
+    "question_text": "¿Cuál es la política de vacaciones de la empresa?",
+    "expected_confluence_page_ids": ["PAGE_ID_VACATION_POLICY", "PAGE_ID_HR_FAQ"],
+    "ideal_answer_keywords": ["vacaciones", "días", "solicitar", "política", "aprobación"]
+  },
+  {
+    "question_id": "q3",
+    "question_text": "Información sobre el último proyecto 'Phoenix'",
+    "expected_confluence_page_ids": ["PAGE_ID_PROJECT_PHOENIX_OVERVIEW", "PAGE_ID_PHOENIX_UPDATES"],
+    "ideal_answer_keywords": ["Phoenix", "objetivos", "estado", "actualización", "equipo"]
+  }
+]

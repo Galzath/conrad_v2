@@ -43,33 +43,29 @@ class GeminiService:
         # For this call log, it's okay to assume the intended model is what's active.
 
         prompt = f"""
-Eres **Conrad**, un asistente virtual experto en la base de conocimientos de nuestra empresa (Confluence).
+Eres **Conrad**, un asistente virtual experto en la base de conocimientos de nuestra empresa (Confluence). Tu objetivo principal es ayudar a los usuarios respondiendo sus preguntas basándote **estrictamente** en la información proporcionada de Confluence.
 
-Un usuario ha hecho la siguiente consulta:
-"{user_question}"
+**[USER_QUESTION]**
+{user_question}
 
-Tu tarea es responder con precisión, usando **solo** la información que aparece en el contexto proporcionado a continuación.  
-**No inventes información, no completes por intuición y no uses conocimientos externos.**
-
----
-
-**Contexto extraído desde Confluence (filtrado por relevancia):**
+**[CONFLUENCE_CONTEXT_START]**
+A continuación, se presenta el contexto recuperado de Confluence. Cada fragmento puede tener indicada su página y URL de origen.
 
 {confluence_context}
+**[CONFLUENCE_CONTEXT_END]**
 
----
-
-**Instrucciones:**
-- Si encontrás información suficiente, proporcioná una respuesta clara y útil.
-- Si no encontrás datos específicos que respondan a la consulta, indicá amablemente que no hay información suficiente en la base de conocimiento.
-
----
+**[INSTRUCTIONS]**
+1.  Responde a la pregunta del usuario utilizando **única y exclusivamente** la información contenida en el **[CONFLUENCE_CONTEXT_START]** y **[CONFLUENCE_CONTEXT_END]**.
+2.  **No inventes información, no completes por intuición y no uses conocimientos externos.**
+3.  Si encuentras información relevante de múltiples fragmentos, sintetízala en una respuesta coherente y concisa.
+4.  Cuando sea posible y relevante, menciona la fuente de tu información (por ejemplo, el título de la página de Confluence o su URL) de forma natural en tu respuesta. (Ej: "Según la página 'Guía de Incorporación'...")
+5.  Si después de analizar el contexto proporcionado, determinas que la información **no es suficiente** para responder de manera precisa a la pregunta del usuario, debes indicarlo claramente. Responde con: "No he encontrado información suficiente en Confluence para responder a tu pregunta." Si puedes, añade sobre qué tema específico no encontraste información, basándote en la pregunta del usuario. (Ej: "...sobre la configuración avanzada del módulo X.")
+6.  Si la pregunta es un saludo, una despedida, o una conversación trivial no relacionada con una búsqueda de información, responde de manera cortés y breve sin intentar buscar en Confluence.
 
 **Respuesta de Conrad:**
 """
 
-        logger.info(f"Sending prompt to Gemini (using configured model, intended: 'gemini-1.5-flash-latest'): {prompt[:200]}...")
-
+        logger.info(f"Sending prompt to Gemini (using configured model): {prompt[:500]}...")
 
         try:
             response = self.model.generate_content(prompt)
@@ -90,6 +86,69 @@ Tu tarea es responder con precisión, usando **solo** la información que aparec
             if hasattr(e, 'response') and e.response:
                  logger.error(f"Gemini API Error Response Details: {e.response}")
             return "Error: An unexpected issue occurred while trying to communicate with the AI model."
+
+    def generate_clarification_summary(self, user_query: str, page_chunk_texts: str, max_length_chars: int = 150) -> str:
+        if not self.model:
+            logger.error("Gemini model not initialized. Cannot generate clarification summary.")
+            return "No se pudo generar un resumen." # Fallback text
+
+        prompt = f"""
+Eres un asistente encargado de ayudar a clarificar una búsqueda de información.
+Un usuario ha realizado la siguiente consulta:
+"{user_query}"
+
+Basándote **únicamente** en el siguiente texto extraído de una página de Confluence, genera un resumen conciso de 1 o 2 frases (máximo {max_length_chars} caracteres) que describa de qué trata el texto y por qué podría ser relevante para la consulta del usuario. El objetivo es ayudar al usuario a decidir si esta página es la que busca. No añadas información externa.
+
+Texto de la página:
+---
+{page_chunk_texts}
+---
+
+Resumen conciso (1-2 frases, max {max_length_chars} caracteres):
+"""
+        # Ensure page_chunk_texts is not excessively long for this specific prompt.
+        MAX_CONTEXT_FOR_SUMMARY_PROMPT = 3000
+        if len(prompt) > MAX_CONTEXT_FOR_SUMMARY_PROMPT:
+            excess = len(prompt) - MAX_CONTEXT_FOR_SUMMARY_PROMPT
+            chars_to_cut_from_context = excess + 200
+            if chars_to_cut_from_context < len(page_chunk_texts):
+                 page_chunk_texts_truncated = page_chunk_texts[:-chars_to_cut_from_context] + "..."
+                 prompt = f"""
+Eres un asistente encargado de ayudar a clarificar una búsqueda de información.
+Un usuario ha realizado la siguiente consulta:
+"{user_query}"
+
+Basándote **únicamente** en el siguiente texto extraído de una página de Confluence, genera un resumen conciso de 1 o 2 frases (máximo {max_length_chars} caracteres) que describa de qué trata el texto y por qué podría ser relevante para la consulta del usuario. El objetivo es ayudar al usuario a decidir si esta página es la que busca. No añadas información externa.
+
+Texto de la página:
+---
+{page_chunk_texts_truncated}
+---
+
+Resumen conciso (1-2 frases, max {max_length_chars} caracteres):
+"""
+            else:
+                 logger.warning(f"Context for summary is too long and cannot be meaningfully truncated for prompt. Prompt length: {len(prompt)}")
+
+
+        logger.info(f"Sending prompt to Gemini for clarification summary (query: '{user_query[:30]}...'): {prompt[:300]}...")
+
+        try:
+            response = self.model.generate_content(prompt)
+
+            if response and response.parts:
+                generated_text = "".join(part.text for part in response.parts if hasattr(part, 'text')).strip()
+                logger.info(f"Successfully received clarification summary from Gemini: {generated_text}")
+                return generated_text[:max_length_chars] if generated_text else "Información relevante (resumen no disponible)."
+            elif response and hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                logger.warning(f"Gemini API call for summary did not return content. Prompt Feedback: {response.prompt_feedback}")
+                return f"Error al generar resumen (bloqueo): {response.prompt_feedback}"
+            else:
+                logger.warning(f"Gemini API call for summary did not return any content or parts. Response: {response}")
+                return "Resumen no disponible."
+        except Exception as e:
+            logger.error(f"Error during Gemini API call for summary: {e}", exc_info=True)
+            return "Error al generar resumen."
 
 # Example Usage (for testing purposes)
 if __name__ == "__main__":

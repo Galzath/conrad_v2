@@ -1,6 +1,11 @@
 import logging
 from atlassian import Confluence
 from bs4 import BeautifulSoup
+import faiss
+import numpy as np
+import json
+import os
+from sentence_transformers import SentenceTransformer
 from ..core.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +24,33 @@ class ConfluenceService:
         except Exception as e:
             logger.error(f"Failed to connect to Confluence: {e}")
             self.confluence = None
+
+        # Load semantic search components
+        self.faiss_index = None
+        self.chunk_metadata = []
+        self.embedding_model_for_query = None
+
+        try:
+            if os.path.exists(settings.FAISS_INDEX_PATH) and os.path.exists(settings.CHUNKS_DATA_PATH):
+                logger.info(f"Loading FAISS index from {settings.FAISS_INDEX_PATH}")
+                self.faiss_index = faiss.read_index(settings.FAISS_INDEX_PATH)
+                logger.info(f"FAISS index loaded. Index has {self.faiss_index.ntotal} vectors.")
+
+                logger.info(f"Loading chunk metadata from {settings.CHUNKS_DATA_PATH}")
+                with open(settings.CHUNKS_DATA_PATH, 'r', encoding='utf-8') as f:
+                    self.chunk_metadata = json.load(f)
+                logger.info(f"Chunk metadata loaded. {len(self.chunk_metadata)} chunks.")
+
+                logger.info(f"Loading embedding model for queries: {settings.EMBEDDING_MODEL_NAME}")
+                self.embedding_model_for_query = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
+                logger.info("Embedding model for queries loaded successfully.")
+            else:
+                logger.warning("FAISS index or chunk metadata file not found. Semantic search capabilities will be limited/disabled.")
+        except Exception as e:
+            logger.error(f"Error loading FAISS index, chunk metadata, or embedding model: {e}", exc_info=True)
+            self.faiss_index = None
+            self.chunk_metadata = []
+            self.embedding_model_for_query = None
 
     def _execute_cql_query(self, cql: str, limit: int) -> list[dict]:
         if not self.confluence:
@@ -147,6 +179,56 @@ class ConfluenceService:
         except Exception as e:
             logger.error(f"Error fetching/parsing page {page_id}: {e}")
         return ""
+
+    def semantic_search_chunks(self, query_text: str, top_k: int = 5) -> list[dict]:
+        if not self.faiss_index or not self.chunk_metadata or not self.embedding_model_for_query or self.faiss_index.ntotal == 0:
+            logger.info("Semantic search components not available or index is empty. Skipping semantic search.")
+            return []
+
+        try:
+            logger.info(f"Performing semantic search for query: '{query_text[:50]}...' with top_k={top_k}")
+            query_embedding = self.embedding_model_for_query.encode([query_text], show_progress_bar=False)
+
+            # FAISS search returns distances (D) and indices (I)
+            # Ensure query_embedding is 2D for search
+            if query_embedding.ndim == 1:
+                query_embedding = np.expand_dims(query_embedding, axis=0)
+
+            distances, indices = self.faiss_index.search(query_embedding.astype('float32'), top_k)
+
+            results = []
+            if indices.size == 0 or indices[0][0] == -1: # Check if any results found
+                 logger.info("No relevant chunks found by semantic search.")
+                 return []
+
+            for i in range(len(indices[0])):
+                idx = indices[0][i]
+                if idx < 0 or idx >= len(self.chunk_metadata): # Invalid index
+                    logger.warning(f"Semantic search returned invalid index {idx}. Skipping.")
+                    continue
+
+                chunk_meta = self.chunk_metadata[idx]
+                # Score: FAISS L2 distance is lower is better. Convert to similarity (e.g., 1 / (1 + distance))
+                # Or simply pass distance and let consumer decide. For now, pass distance.
+                # A common practice is to use dot product for similarity if embeddings are normalized,
+                # but IndexFlatL2 uses L2 distance.
+                score = float(distances[0][i])
+
+                results.append({
+                    "chunk_id": idx, # The index in the chunk_metadata list
+                    "page_id": chunk_meta.get("page_id"),
+                    "title": chunk_meta.get("page_title"), # Ensure this key exists in your chunk_metadata
+                    "url": chunk_meta.get("url"),
+                    "text": chunk_meta.get("text"),
+                    "context_hierarchy": chunk_meta.get("context_hierarchy"), # Pass along hierarchy
+                    "score": score, # Raw L2 distance, lower is better
+                    "search_method": "semantic"
+                })
+            logger.info(f"Semantic search found {len(results)} chunks.")
+            return results
+        except Exception as e:
+            logger.error(f"Error during semantic search: {e}", exc_info=True)
+            return []
 
 # Example Usage (for testing purposes)
 if __name__ == "__main__":

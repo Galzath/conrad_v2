@@ -57,6 +57,28 @@ async def startup_event():
         logger.error("Gemini service failed to initialize.")
     logger.info("Confluence and Gemini services initialized (or attempted).")
 
+# Ensure List, Dict, Any, Optional are imported if not already at the top
+from typing import List, Dict, Any, Optional
+from sentence_transformers import CrossEncoder
+import numpy as np # numpy is used for cross_encoder scores potentially
+
+# (Existing service imports and logger setup remain here)
+# ...
+
+# --- Initialize Services and Models ---
+# (Existing ConfluenceService and GeminiService initializations remain here)
+# ...
+
+# Load Cross-Encoder Model
+logger.info("Loading Cross-Encoder model...")
+try:
+    cross_encoder_model_name = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+    cross_encoder = CrossEncoder(cross_encoder_model_name)
+    logger.info(f"Cross-Encoder model '{cross_encoder_model_name}' loaded successfully.")
+except Exception as e:
+    logger.error(f"Failed to load Cross-Encoder model '{cross_encoder_model_name}': {e}", exc_info=True)
+    cross_encoder = None
+
 def extract_space_keys_from_query(question: str) -> list[str]:
     found_keys = set()
     matches = SPACE_KEY_PATTERN.findall(question)
@@ -203,81 +225,100 @@ def _clean_title_for_options(title: str, query_terms_lower: List[str]) -> str:
 
 
 def generate_clarification_from_results(
-    search_results: List[Dict[str, Any]],
-    original_query_terms: List[str]
+    search_results_for_clarification: List[Dict[str, Any]], # List of ALL initial chunks/results
+    original_query_text: str, # Changed from original_query_terms
+    gemini_service_instance: GeminiService # Pass the instance
 ) -> Optional[Dict[str, Any]]:
-    logger.debug(f"generate_clarification_from_results: Input search_results_count={len(search_results)}, original_query_terms={original_query_terms}")
+    logger.debug(f"generate_clarification_from_results: Input search_results_count={len(search_results_for_clarification)}")
 
-    if not search_results or len(search_results) < 2:
-        logger.debug("generate_clarification_from_results: No clarification generated, returning None (few results).")
+    if not search_results_for_clarification or len(search_results_for_clarification) < 1:
+        logger.debug("generate_clarification_from_results: Not enough results to generate clarification options.")
         return None
 
-    logger.debug(f"Processing titles: {[r.get('title') for r in search_results if r.get('title')]}")
-    query_terms_lower = [term.lower() for term in original_query_terms]
+    unique_pages_for_clarification = []
+    seen_page_ids_for_clarification = set()
+    for res_chunk in search_results_for_clarification:
+        page_id = res_chunk.get("page_id")
+        if page_id and res_chunk.get("title") and page_id not in seen_page_ids_for_clarification:
+            unique_pages_for_clarification.append({
+                "id": page_id,
+                "title": res_chunk.get("title"),
+                "url": res_chunk.get("url") # Keep url if needed, though not directly used for option text
+            })
+            seen_page_ids_for_clarification.add(page_id)
+
+    if len(unique_pages_for_clarification) < 2: # Need at least 2 distinct pages for clarification
+       logger.debug("Not enough unique pages from results to generate clarification.")
+       return None
 
     candidate_options = []
-    titles_processed = set() # To avoid processing the exact same title multiple times if results are redundant
+    # Limit the number of pages to generate summaries for, to avoid too many LLM calls
+    MAX_PAGES_FOR_SUMMARY_CLARIFICATION = 4
+    for page_candidate in unique_pages_for_clarification[:MAX_PAGES_FOR_SUMMARY_CLARIFICATION]:
+        page_id = page_candidate["id"]
+        page_title = page_candidate["title"]
 
-    for result in search_results:
-        title = result.get("title")
-        page_id = result.get("id")
+        chunks_for_this_page = [
+            chk.get("text", "") for chk in search_results_for_clarification
+            if chk.get("page_id") == page_id and chk.get("text")
+        ]
 
-        if not title or not page_id or title in titles_processed:
-            continue
+        if not chunks_for_this_page:
+            logger.warning(f"No text chunks found for page ID {page_id} ('{page_title}') for summary generation.")
+            option_text = page_title # Fallback to title
+        else:
+            # Concatenate top 1 or 2 chunks (or more, up to a limit)
+            # Assuming search_results_for_clarification is already somewhat relevance-sorted for these top chunks.
+            # Or, if not sorted, it takes the first few found.
+            # Let's take up to ~500 words for summary context.
+            context_text_for_summary = ""
+            char_limit_for_summary_context = 1500 # Approx 500 words
+            for chunk_text in chunks_for_this_page:
+                if len(context_text_for_summary) + len(chunk_text) > char_limit_for_summary_context:
+                    needed = char_limit_for_summary_context - len(context_text_for_summary)
+                    if needed > 50: # Add partial if space allows
+                         context_text_for_summary += "\n" + chunk_text[:needed] + "..."
+                    break
+                context_text_for_summary += "\n" + chunk_text
+            context_text_for_summary = context_text_for_summary.strip()
 
-        titles_processed.add(title)
+            logger.info(f"Generating summary for page ID {page_id} ('{page_title}') for clarification.")
+            summary = gemini_service_instance.generate_clarification_summary(original_query_text, context_text_for_summary)
+            option_text = summary if summary and "Error" not in summary and "no disponible" not in summary and "No se pudo" not in summary else page_title
 
-        # Simplified: try to extract a distinguishing part of the title.
-        # This is a placeholder for a more robust "theme extraction".
-        # The _clean_title_for_options is a starting point.
-        # We want the option text to be what's *different* or *specific* about this title.
+        candidate_options.append({"id": page_id, "text": option_text, "original_title": page_title})
 
-        option_text = _clean_title_for_options(title, query_terms_lower)
-
-        # Ensure option_text is reasonably unique and not just a generic term
-        # This check needs to be more robust. For now, check if it's not empty and not too short.
-        if option_text and len(option_text) > 2 and option_text.lower() not in query_terms_lower:
-            # Check for uniqueness among already added options (by text)
-            is_duplicate_option_text = any(opt['text'].lower() == option_text.lower() for opt in candidate_options)
-            if not is_duplicate_option_text:
-                 candidate_options.append({"id": page_id, "text": option_text, "original_title": title})
-
-    # Filter options to ensure they are distinct enough.
-    # The previous check for duplicate option_text helps.
-    # Now, ensure we have a good number of options.
-
-    if not candidate_options:
-        logger.debug("generate_clarification_from_results: No candidate options generated after cleaning and filtering.")
-        logger.debug("generate_clarification_from_results: No clarification generated, returning None.")
-        return None
-
-    logger.debug(f"generate_clarification_from_results: Candidate options generated: {candidate_options}")
-    # Simplistic way to ensure diversity: if many options have very similar text, group them or pick best.
-    # For now, we rely on the _clean_title_for_options and the duplicate check.
-
-    # Limit to 2-4 distinct options as per requirement
-    # If we have many candidates, try to pick the most distinct ones.
-    # This part could also involve scoring options based on how distinct they are.
-    # For now, just take the first few unique ones if many are generated.
+        # Stop if we have enough good options, even if more unique_pages_for_clarification exist
+        if len(candidate_options) >= 4:
+            break
 
     final_options = []
     seen_option_texts = set()
     for option in candidate_options:
-        if len(final_options) < 4:
-            # The check for duplicate option text was already done during candidate_options.append
-            # but if _clean_title_for_options generates identical text for different original titles,
-            # we need to ensure we don't offer identical choices.
-            # The earlier check `is_duplicate_option_text` should handle this for `option_text`.
-            final_options.append({"id": option["id"], "text": option["text"]}) # Keep only id and text for final output
+        if len(final_options) < 4: # Max 4 distinct text options
+            # Ensure option text is not just the title if summary failed badly or was identical to title
+            # And ensure it's somewhat unique to avoid identical clarification choices
+            option_display_text = option['text']
+            if option_display_text.lower() == option['original_title'].lower() and option_display_text != option['original_title']:
+                 option_display_text = option['original_title'] # Prefer original casing if identical after lowercasing
+
+            if option_display_text.lower() not in seen_option_texts:
+                final_options.append({"id": option["id"], "text": option_display_text})
+                seen_option_texts.add(option_display_text.lower())
         else:
             break
 
+    if len(final_options) < 2: # Still need at least 2 distinct options
+        logger.debug("generate_clarification_from_results: Not enough distinct final options after summary generation.")
+        return None
+
     logger.debug(f"generate_clarification_from_results: Final options selected: {final_options}")
-    if len(final_options) >= 2 and len(final_options) <= 4:
-        # Create a summary of original query terms for the question text
-        # Take first 2-3 terms for brevity
-        query_context = " ".join(original_query_terms[:3])
-        if len(original_query_terms) > 3:
+
+    if len(final_options) >= 2 and len(final_options) <= 4: # Check again, as some summaries might have failed
+        # Use original_query_text for context in the clarification question
+        query_context_words = original_query_text.split()
+        query_context = " ".join(query_context_words[:7]) # First 7 words
+        if len(query_context_words) > 7:
             query_context += "..."
 
         question_text = f"Your query about '{query_context}' returned information on different topics. Which specific area are you interested in?"
@@ -313,36 +354,31 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
             if retrieved_session_data and retrieved_session_data.conversation_step == "awaiting_clarification_response":
                 logger.info(f"Valid session found for {current_session_id}. Processing clarification response.")
-                proceed_as_new_question = False # We are processing a clarification response
+                proceed_as_new_question = False
 
                 original_question_text = retrieved_session_data.original_question
+                # initial_search_results from session are now List of Chunks/Pages
                 search_results_from_session = retrieved_session_data.initial_search_results
 
                 refined_search_results = []
-
                 if user_question.selected_option_id:
                     logger.info(f"User selected option ID: {user_question.selected_option_id}")
-                    for result in search_results_from_session:
-                        if result.get("id") == user_question.selected_option_id:
-                            refined_search_results.append(result)
-                            logger.info(f"Prioritizing result based on selected_option_id: {result.get('title')}")
-                            break # Found the selected option
-                # else if user_question.clarification_response:
-                    # TODO: Implement free-text clarification response handling (more complex)
-                    # For now, if no selected_option_id, we might just use all initial_search_results
-                    # or try a naive filtering based on the text.
-                    # logger.info(f"User provided free-text clarification: {user_question.clarification_response}")
-                    # This part is complex: requires re-evaluating results or new search.
-                    # For this version, we'll fall back to using initial results if no option selected.
+                    # The selected_option_id corresponds to a page_id
+                    for chunk_or_page in search_results_from_session:
+                        if chunk_or_page.get("page_id") == user_question.selected_option_id:
+                            refined_search_results.append(chunk_or_page)
+                    if refined_search_results:
+                         logger.info(f"Prioritizing results for page_id: {user_question.selected_option_id}. Found {len(refined_search_results)} related items.")
+                    else:
+                        logger.warning(f"Selected option page_id {user_question.selected_option_id} not found in session's search results. Using all session results.")
+                        refined_search_results = search_results_from_session # Fallback
+                else:
+                    logger.info("No specific option ID selected, or free-text response (not fully supported). Using all results from session.")
+                    refined_search_results = search_results_from_session # Fallback
 
-                if not refined_search_results: # Fallback if selected_option_id didn't yield a specific result
-                    logger.warning(f"No specific result refined for session {current_session_id}, using all initial results from session.")
-                    refined_search_results = search_results_from_session
-
-                # Assemble context from these (potentially refined) search_results
                 search_terms_from_session = retrieved_session_data.extracted_terms
                 context_for_gemini, unique_source_urls = _build_context_from_search_results(
-                    refined_search_results,
+                    refined_search_results, # This is now a list of chunks/pages
                     search_terms_from_session.get("phrases", []),
                     search_terms_from_session.get("keywords", []),
                     max_context_length
@@ -350,50 +386,138 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
 
                 if not context_for_gemini or context_for_gemini.startswith("No se encontró información"):
                      logger.warning(f"Context for Gemini is empty or default after clarification for session {current_session_id}.")
-                     # Provide a more specific message if context is still poor after clarification
                      context_for_gemini = "Aunque intentamos aclarar, no se encontró información específica en Confluence para su consulta refinada."
-
 
                 ai_answer = gemini_service.generate_response(original_question_text, context_for_gemini)
                 delete_session(current_session_id)
                 logger.info(f"Session {current_session_id} deleted after processing clarification.")
-                return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None) # Session is complete
+                return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
 
-            else:
+            else: # Session issue, treat as new
                 if retrieved_session_data:
                     logger.warning(f"Session {current_session_id} found, but not awaiting clarification (step: {retrieved_session_data.conversation_step}). Treating as new question.")
-                    delete_session(current_session_id) # Clean up invalid state session
+                    delete_session(current_session_id)
                 else:
                     logger.warning(f"Session ID {current_session_id} provided by user, but no active session found. Treating as new question.")
-                # proceed_as_new_question remains True
 
         # B. Handling New Question (or if follow-up processing decided to treat as new)
         if proceed_as_new_question:
             logger.info(f"Processing as new question: {user_question.question}")
             extracted_terms = extract_search_terms(user_question.question)
             extracted_space_keys = extract_space_keys_from_query(user_question.question)
+
+            N_SEMANTIC_RESULTS = 5
+            N_CQL_RESULTS = 3
             
-            logger.info(f"Searching Confluence with terms: {extracted_terms}, space_keys: {extracted_space_keys}")
-            initial_search_results = confluence_service.search_content(
+            logger.info(f"Performing semantic search for: {user_question.question}")
+            semantic_chunks = confluence_service.semantic_search_chunks(
+                query_text=user_question.question,
+                top_k=N_SEMANTIC_RESULTS
+            )
+
+            logger.info(f"Performing keyword search with terms: {extracted_terms}, space_keys: {extracted_space_keys}")
+            keyword_pages = confluence_service.search_content(
                 search_terms=extracted_terms,
                 space_keys=extracted_space_keys if extracted_space_keys else None,
-                limit=10 # Increased limit slightly for better clarification options
+                limit=N_CQL_RESULTS
             )
+
+            # --- Hybrid Search: Combine and Deduplicate ---
+            combined_results = []
+            processed_page_urls_from_semantic = set()
+
+            for chunk in semantic_chunks:
+                combined_results.append({
+                    "text": chunk["text"], "url": chunk["url"], "title": chunk["title"],
+                    "score": chunk["score"], "search_method": "semantic", # L2 distance, lower is better
+                    "context_hierarchy": chunk.get("context_hierarchy", chunk["title"]),
+                    "page_id": chunk.get("page_id")
+                })
+                if chunk["url"]:
+                    processed_page_urls_from_semantic.add(chunk["url"])
+
+            for page in keyword_pages:
+                if page["url"] not in processed_page_urls_from_semantic:
+                    logger.info(f"Fetching content for keyword-matched page: {page['title']} (ID: {page['id']})")
+                    page_content_full = confluence_service.get_page_content_by_id(page['id'])
+                    if page_content_full:
+                        combined_results.append({
+                            "text": page_content_full, "url": page["url"], "title": page["title"],
+                            "score": 1000.0, "search_method": "keyword_page", # Default high L2 score
+                            "context_hierarchy": page["title"], "page_id": page['id']
+                        })
+                    else:
+                        logger.warning(f"Could not fetch content for keyword-matched page ID: {page['id']}")
+                else:
+                    logger.info(f"Page {page['url']} from keyword search already covered by semantic chunks. Skipping.")
+
+            # Initial sort: L2 distance (lower is better) for semantic, keyword pages have high L2.
+            combined_results.sort(key=lambda x: x.get("score", float('inf')))
+
+            # --- Re-ranking with Cross-Encoder ---
+            K_CANDIDATES_FOR_RERANKING = 25
+            candidates_to_rerank = combined_results[:K_CANDIDATES_FOR_RERANKING]
+
+            if cross_encoder and candidates_to_rerank:
+                logger.info(f"Re-ranking top {len(candidates_to_rerank)} candidates with Cross-Encoder...")
+                query_chunk_pairs = []
+                for candidate in candidates_to_rerank:
+                    text_for_reranking = candidate.get("text", "")
+                    MAX_TEXT_LEN_FOR_CROSS_ENCODER = 2000
+                    if len(text_for_reranking) > MAX_TEXT_LEN_FOR_CROSS_ENCODER:
+                        text_for_reranking = text_for_reranking[:MAX_TEXT_LEN_FOR_CROSS_ENCODER]
+                    query_chunk_pairs.append((user_question.question, text_for_reranking))
+
+                if query_chunk_pairs:
+                    try:
+                        cross_encoder_scores = cross_encoder.predict(query_chunk_pairs, show_progress_bar=False)
+
+                        for i, candidate in enumerate(candidates_to_rerank):
+                            candidate["score"] = float(cross_encoder_scores[i]) # New score, higher is better
+                            candidate["search_method"] = "hybrid_reranked"
+
+                        # Sort by new cross-encoder score, higher is better
+                        candidates_to_rerank.sort(key=lambda x: x.get("score", float('-inf')), reverse=True)
+                        logger.info(f"Re-ranking complete. Top candidate score: {candidates_to_rerank[0]['score'] if candidates_to_rerank else 'N/A'}")
+                        initial_search_results = candidates_to_rerank
+                    except Exception as e:
+                        logger.error(f"Error during Cross-Encoder prediction: {e}", exc_info=True)
+                        initial_search_results = candidates_to_rerank # Fallback to initially sorted top K
+                else:
+                    initial_search_results = candidates_to_rerank
+            else:
+                initial_search_results = candidates_to_rerank # Use top K from L2 sort if no cross_encoder or no candidates
+
+            # Append remaining non-reranked results if K_CANDIDATES_FOR_RERANKING was less than total combined_results
+            # These results are still sorted by their original L2 scores or have default high L2 for keyword.
+            if len(combined_results) > len(initial_search_results):
+                 remaining_results = combined_results[len(initial_search_results):]
+                 initial_search_results.extend(remaining_results)
+
+            # Ensure overall list is still somewhat reasonably sized for context building
+            MAX_RESULTS_FOR_CONTEXT = K_CANDIDATES_FOR_RERANKING + 10 # Example: Keep more than just reranked pool
+            initial_search_results = initial_search_results[:MAX_RESULTS_FOR_CONTEXT]
+            # --- End Re-ranking ---
 
             if initial_search_results:
                 # Attempt to generate clarification questions
-                combined_query_terms = list(extracted_terms.get("keywords", [])) + list(extracted_terms.get("phrases", []))
-                clarification_details = generate_clarification_from_results(initial_search_results, combined_query_terms)
+                # Pass the user_question.question (string) and the gemini_service instance
+                # Pass initial_search_results which are the combined, reranked (or sorted) list of chunks/pages
+                clarification_details = generate_clarification_from_results(
+                    initial_search_results,
+                    user_question.question,
+                    gemini_service  # Pass the global gemini_service instance
+                )
 
                 if clarification_details:
-                    logger.info(f"Clarification details generated: {clarification_details}") # ADDED LOG
+                    logger.info(f"Clarification details generated: {clarification_details}")
                     new_session_id = create_new_session_id()
-                    logger.info(f"Clarification needed. Creating new session: {new_session_id}") # Existing log
+                    logger.info(f"Clarification needed. Creating new session: {new_session_id}")
 
                     session_to_save = SessionData(
                         original_question=user_question.question,
-                        extracted_terms=extracted_terms, # Store the dict directly
-                        initial_search_results=initial_search_results, # Store raw results
+                        extracted_terms=extracted_terms,
+                        initial_search_results=initial_search_results, # Store combined_results (chunks/pages)
                         clarification_question_asked=clarification_details["question_text"],
                         clarification_options_provided=clarification_details["options"],
                         conversation_step="awaiting_clarification_response",
@@ -401,120 +525,125 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
                     )
                     save_session(new_session_id, session_to_save)
 
-                    response_for_clarification = ChatResponse( # CONSTRUCT RESPONSE FOR LOGGING
-                        answer="", # No direct answer when clarification is needed
+                    response_for_clarification = ChatResponse(
+                        answer="",
                         session_id=new_session_id,
                         needs_clarification=True,
                         clarification_question_text=clarification_details["question_text"],
                         clarification_options=clarification_details["options"]
                     )
-                    logger.info(f"Returning ChatResponse for clarification: {response_for_clarification.model_dump_json(indent=2)}") # ADDED LOG
+                    logger.info(f"Returning ChatResponse for clarification: {response_for_clarification.model_dump_json(indent=2)}")
                     return response_for_clarification
 
             # If no clarification needed, or no search results, proceed to generate response directly
             context_for_gemini, unique_source_urls = _build_context_from_search_results(
-                initial_search_results if initial_search_results else [],
+                initial_search_results if initial_search_results else [], # Pass combined_results
                 extracted_terms.get("phrases", []),
                 extracted_terms.get("keywords", []),
                 max_context_length
             )
             
             ai_answer = gemini_service.generate_response(user_question.question, context_for_gemini)
-            # No session_id in response if it's a direct answer to a new question without clarification
             return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
 
-    # Fallback for any logic error, though ideally all paths are covered.
-    except HTTPException as http_exc: # ALIGNED EXCEPTION BLOCK
-        raise http_exc # Re-raise to let FastAPI handle it
-    except Exception as e: # ALIGNED EXCEPTION BLOCK
+    # Fallback for any logic error
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
         logger.error(f"An unexpected error occurred in /chat: {e}", exc_info=True)
-        # If a session was created for clarification but an error occurred before returning, delete it.
-        # This is a bit broad; might need more specific error handling if a session_id was generated in this try block.
-        # For now, this is a general cleanup.
-        # if 'new_session_id' in locals() and get_session(new_session_id):
-        #     delete_session(new_session_id)
-        #     logger.info(f"Session {new_session_id} deleted due to an error during processing.")
         raise HTTPException(status_code=500, detail="Error interno del servidor.")
 
-# Helper function to consolidate context building logic (refactored from original)
+# Helper function to consolidate context building logic
 def _build_context_from_search_results(
-    search_results: List[Dict[str, Any]],
+    search_results: List[Dict[str, Any]], # Each dict is now a chunk or a page treated as chunk
     query_phrases: List[str],
     query_keywords: List[str],
     max_context_length: int
 ) -> tuple[str, List[str]]:
 
     context_for_gemini = "No se encontró información específica en Confluence que coincida bien con su consulta." # Default
-    unique_source_urls = []
 
     if not search_results:
-        return context_for_gemini, unique_source_urls
+        return context_for_gemini, []
 
-    raw_source_urls = [result['url'] for result in search_results if result.get('url')]
-    unique_source_urls = sorted(list(dict.fromkeys(raw_source_urls)))
-
-    scored_paragraphs_with_source = []
-    for result in search_results:
-        page_id = result.get("id")
-        if not page_id: continue
-
-        page_content_full = confluence_service.get_page_content_by_id(page_id)
-        if not page_content_full:
-            logger.warning(f"No content for page ID: {page_id}, title: {result.get('title')}")
+    # New logic for handling chunks:
+    scored_chunks_with_source = []
+    for chunk_data in search_results:
+        chunk_text = chunk_data.get("text")
+        if not chunk_text:
             continue
 
-        page_title = result.get('title', 'Página Desconocida')
-        page_url = result.get('url', 'N/A')
-        paragraphs = page_content_full.split('\n\n')
-        if len(paragraphs) <= 1 and '\n' in page_content_full:
-            paragraphs = page_content_full.split('\n')
+        relevance_score = 0
+        search_method = chunk_data.get("search_method")
+        current_score = chunk_data.get("score")
 
-        for para_text in paragraphs:
-            if not para_text.strip(): continue
-            score = score_paragraph(para_text, query_phrases, query_keywords)
-            if score > 0:
-                scored_paragraphs_with_source.append((score, para_text, page_title, page_url))
+        if search_method == "hybrid_reranked":
+            relevance_score = current_score  # This score is already "higher is better"
+        elif search_method == "semantic":
+            # Convert L2 distance (lower is better) to a similarity-like score (higher is better)
+            relevance_score = 1.0 / (1.0 + current_score) if current_score != float('inf') else 0
+        elif search_method == "keyword_page":
+            # This case applies if a keyword page was NOT reranked (e.g., beyond K_CANDIDATES_FOR_RERANKING)
+            # Its 'score' might be the default high L2 (1000.0).
+            # We should score it using keywords for a "higher is better" relevance.
+            relevance_score = score_paragraph(chunk_text, query_phrases, query_keywords)
+        else: # Fallback for any other cases or if score/method is missing
+            relevance_score = 0.0
 
-    if scored_paragraphs_with_source:
-        scored_paragraphs_with_source.sort(key=lambda x: x[0], reverse=True)
-        logger.info(f"Found {len(scored_paragraphs_with_source)} relevant paragraphs. Top scores: {[s[0] for s in scored_paragraphs_with_source[:3]]}")
+        scored_chunks_with_source.append(
+            (relevance_score,
+             chunk_text,
+             chunk_data.get("title", "Fuente Desconocida"),
+             chunk_data.get("url", "N/A"),
+             chunk_data.get("context_hierarchy", chunk_data.get("title", "N/A"))
+            )
+        )
 
-        selected_context_parts = []
-        current_length = 0
+    # Sort by final relevance score (higher is better for all types now)
+    scored_chunks_with_source.sort(key=lambda x: x[0], reverse=True)
 
-        for score, para_text, p_title, p_url in scored_paragraphs_with_source:
-            content_header = f"Contexto de '{p_title}' (URL: {p_url}, Puntuación de Relevancia: {score}):\n"
-            full_snippet = f"{content_header}{para_text}\n---"
+    selected_context_parts = []
+    current_length = 0
+    final_selected_source_urls = set()
+
+    if scored_chunks_with_source:
+        logger.info(f"Found {len(scored_chunks_with_source)} relevant chunks/pages. Top scores: {[s[0] for s in scored_chunks_with_source[:3]]}")
+
+        for score, chk_text, chk_title, chk_url, chk_hierarchy in scored_chunks_with_source:
+            # Use context_hierarchy if available and different from title, otherwise just title
+            display_title = chk_title
+            if chk_hierarchy and chk_hierarchy.lower() != chk_title.lower():
+                display_title = f"{chk_title} (Sección: {chk_hierarchy})"
+
+            content_header = f"Contexto de '{display_title}' (URL: {chk_url}, Puntuación Relevancia: {score:.4f}):\n"
+            full_snippet = f"{content_header}{chk_text}\n---"
 
             if current_length + len(full_snippet) <= max_context_length:
                 selected_context_parts.append(full_snippet)
                 current_length += len(full_snippet)
+                if chk_url != "N/A":
+                    final_selected_source_urls.add(chk_url)
             else:
                 remaining_space = max_context_length - current_length
-                if remaining_space > len(content_header) + 50: # Ensure space for header and some text
-                    truncated_para_text_len = remaining_space - (len(content_header) + len("\n---") + 3) # +3 for "..."
+                if remaining_space > len(content_header) + 50:
+                    truncated_para_text_len = remaining_space - (len(content_header) + len("\n---") + 3)
                     if truncated_para_text_len > 0:
-                        truncated_snippet = f"{content_header}{para_text[:truncated_para_text_len]}...\n---"
+                        truncated_snippet = f"{content_header}{chk_text[:truncated_para_text_len]}...\n---"
                         selected_context_parts.append(truncated_snippet)
+                        if chk_url != "N/A":
+                           final_selected_source_urls.add(chk_url)
                 break
 
         if selected_context_parts:
             context_for_gemini = "\n".join(selected_context_parts)
-        # Fallback if no scored paragraphs fit but results exist (covered by initial default for context_for_gemini)
-        # If selected_context_parts is empty but search_results were there, and scored_paragraphs_with_source was also empty
-        # this means no paragraph scored > 0. The initial default message for context_for_gemini will be used.
 
-    # Fallback if no paragraphs scored > 0 from any document, but search_results existed.
-    # Use content from the very first search result as a last resort.
-    elif search_results: # scored_paragraphs_with_source was empty
-        logger.info("No paragraphs scored > 0 from any search result. Using initial content of first search result as fallback.")
-        first_result_id = search_results[0].get("id")
-        if first_result_id:
-            first_page_content_fallback = confluence_service.get_page_content_by_id(first_result_id)
-            if first_page_content_fallback:
-                context_for_gemini = f"Contexto de '{search_results[0].get('title', 'Título Desconocido')}':\n{first_page_content_fallback[:max_context_length*2//3]}"
+    # Fallback if no context built but search_results (chunks) existed.
+    # This means chunks might not have scored well or other issues.
+    # The initial default message for context_for_gemini will be used in such cases.
+    # If selected_context_parts is empty, the default "No se encontró..." message is used.
 
-    return context_for_gemini, unique_source_urls
+    return context_for_gemini, sorted(list(final_selected_source_urls))
+
 
 @app.get("/health", summary="Health Check")
 async def health_check():
