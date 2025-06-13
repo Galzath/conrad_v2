@@ -6,3 +6,8 @@ python-dotenv
 atlassian-python-api
 pydantic
 beautifulsoup4
+sentence-transformers
+faiss-cpu
+numpy
+nltk
+scikit-learn
