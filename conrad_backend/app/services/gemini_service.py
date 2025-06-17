@@ -92,44 +92,68 @@ A continuación, se presenta el contexto recuperado de Confluence. Cada fragment
             logger.error("Gemini model not initialized. Cannot generate clarification summary.")
             return "No se pudo generar un resumen." # Fallback text
 
+        # max_length_chars is the function parameter (default 150) - this is the ultimate hard cut.
+        # Let's define a tighter target for the prompt itself.
+        prompt_target_chars = 80 # New: A tighter target for Gemini's generation.
+
         prompt = f"""
-Eres un asistente encargado de ayudar a clarificar una búsqueda de información.
-Un usuario ha realizado la siguiente consulta:
+Eres un asistente que ayuda a generar opciones de clarificación para un usuario.
+La consulta original del usuario es:
 "{user_query}"
 
-Basándote **únicamente** en el siguiente texto extraído de una página de Confluence, genera un resumen conciso de 1 o 2 frases (máximo {max_length_chars} caracteres) que describa de qué trata el texto y por qué podría ser relevante para la consulta del usuario. El objetivo es ayudar al usuario a decidir si esta página es la que busca. No añadas información externa.
+Analiza el siguiente texto de una página de Confluence. Tu tarea es crear una **frase muy concisa y descriptiva** (idealmente de 5 a 10 palabras, y no más de {prompt_target_chars} caracteres) que resuma el tema principal del texto y lo distinga de otras posibles opciones. Esta frase se usará como texto de un botón de opción.
+
+**Importante:**
+- La frase debe ser un **pensamiento completo y natural**, no una oración cortada.
+- Debe ser **directamente relevante** para la consulta del usuario.
+- **No incluyas información externa.**
+- **Evita introducciones** como "Este texto trata sobre..." o "Este documento describe...". Ve directo al punto.
 
 Texto de la página:
 ---
 {page_chunk_texts}
 ---
 
-Resumen conciso (1-2 frases, max {max_length_chars} caracteres):
+Frase descriptiva para el botón de opción (muy concisa, idealmente 5-10 palabras, max {prompt_target_chars} caracteres):
 """
         # Ensure page_chunk_texts is not excessively long for this specific prompt.
-        MAX_CONTEXT_FOR_SUMMARY_PROMPT = 3000
+        MAX_CONTEXT_FOR_SUMMARY_PROMPT = 3000 # This is the overall prompt limit
         if len(prompt) > MAX_CONTEXT_FOR_SUMMARY_PROMPT:
             excess = len(prompt) - MAX_CONTEXT_FOR_SUMMARY_PROMPT
-            chars_to_cut_from_context = excess + 200
+            # Calculate how much to cut from page_chunk_texts.
+            # We need to account for the length of the rest of the prompt.
+            # The variable part is page_chunk_texts.
+            chars_to_cut_from_context = excess + 200 # Add some buffer
+
             if chars_to_cut_from_context < len(page_chunk_texts):
                  page_chunk_texts_truncated = page_chunk_texts[:-chars_to_cut_from_context] + "..."
+                 # Reconstruct the prompt with truncated text
                  prompt = f"""
-Eres un asistente encargado de ayudar a clarificar una búsqueda de información.
-Un usuario ha realizado la siguiente consulta:
+Eres un asistente que ayuda a generar opciones de clarificación para un usuario.
+La consulta original del usuario es:
 "{user_query}"
 
-Basándote **únicamente** en el siguiente texto extraído de una página de Confluence, genera un resumen conciso de 1 o 2 frases (máximo {max_length_chars} caracteres) que describa de qué trata el texto y por qué podría ser relevante para la consulta del usuario. El objetivo es ayudar al usuario a decidir si esta página es la que busca. No añadas información externa.
+Analiza el siguiente texto de una página de Confluence. Tu tarea es crear una **frase muy concisa y descriptiva** (idealmente de 5 a 10 palabras, y no más de {prompt_target_chars} caracteres) que resuma el tema principal del texto y lo distinga de otras posibles opciones. Esta frase se usará como texto de un botón de opción.
+
+**Importante:**
+- La frase debe ser un **pensamiento completo y natural**, no una oración cortada.
+- Debe ser **directamente relevante** para la consulta del usuario.
+- **No incluyas información externa.**
+- **Evita introducciones** como "Este texto trata sobre..." o "Este documento describe...". Ve directo al punto.
 
 Texto de la página:
 ---
 {page_chunk_texts_truncated}
 ---
 
-Resumen conciso (1-2 frases, max {max_length_chars} caracteres):
+Frase descriptiva para el botón de opción (muy concisa, idealmente 5-10 palabras, max {prompt_target_chars} caracteres):
 """
             else:
-                 logger.warning(f"Context for summary is too long and cannot be meaningfully truncated for prompt. Prompt length: {len(prompt)}")
-
+                 # If context is too long but truncation would remove all of it or make it meaningless
+                 logger.warning(f"Context for summary is too long ({len(page_chunk_texts)} chars) and cannot be meaningfully truncated for prompt (total prompt length: {len(prompt)}). Attempting to send with potentially truncated context or rely on API to handle if still too long.")
+                 # In this case, the original (potentially too long) prompt will be used,
+                 # or if page_chunk_texts itself was the main issue, it might be significantly cut here.
+                 # The API might truncate or error out if the overall prompt is still too large.
 
         logger.info(f"Sending prompt to Gemini for clarification summary (query: '{user_query[:30]}...'): {prompt[:300]}...")
 
