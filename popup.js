@@ -172,6 +172,14 @@ function handleHistoryLoadingFinished() {
     // Implements the UI for clarification questions
     function displayClarificationUI(questionText, options, sessionId, originalQuery) {
         console.log("displayClarificationUI called with:", questionText, options, sessionId, originalQuery);
+        console.log("Received options for display:", JSON.stringify(options, null, 2));
+        console.log("Is 'options' an array?", Array.isArray(options));
+        if(Array.isArray(options)) { console.log("Number of options received:", options.length); }
+
+        if (!options || !Array.isArray(options) || options.length === 0) {
+            console.error("displayClarificationUI: No valid options provided or options array is empty. Cannot render option buttons.", options);
+            options = [];
+        }
 
         addMessageToChat(questionText, 'conrad'); // Display the clarification question
 
@@ -184,8 +192,18 @@ function handleHistoryLoadingFinished() {
             chatMessages.appendChild(optionsContainer); // Append to chat messages for visibility
         }
         optionsContainer.innerHTML = ''; // Clear previous options
+        console.log("Options container element:", optionsContainer);
 
         options.forEach(option => {
+            console.log("Processing option:", JSON.stringify(option, null, 2));
+            if (typeof option !== 'object' || option === null || !option.text || !option.id) {
+                console.error('displayClarificationUI: Skipping invalid or incomplete option object during button creation:', JSON.stringify(option, null, 2));
+                return;
+            }
+            // The individual console.warn for missing text/id are now covered by the comprehensive check above.
+            // if (typeof option !== 'object' || option === null) { console.error('Option is not an object:', option); return; } // Covered by above
+            // if (!option.text) { console.warn('Option missing text:', JSON.stringify(option, null, 2)); } // Covered by above
+            // if (!option.id) { console.warn('Option missing id:', JSON.stringify(option, null, 2)); } // Covered by above
             const button = document.createElement('button');
             button.textContent = option.text;
             button.dataset.id = option.id;
@@ -195,6 +213,7 @@ function handleHistoryLoadingFinished() {
                 handleClarificationSelection(option.id, sessionId, originalQuery);
                 optionsContainer.innerHTML = ''; // Clear options after selection
             });
+            console.log("Appending button:", button.outerHTML);
             optionsContainer.appendChild(button);
         });
 
