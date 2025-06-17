@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorMessage = document.getElementById('error-message');
     const clearChatButton = document.getElementById('clear-chat-button'); // Added constant
 
+    let originalUserQuery = ""; // Declare originalUserQuery
     let chatHistory = []; // Initialize chatHistory array
 
     // Apply Dark Mode theme based on preference
@@ -116,6 +117,131 @@ document.addEventListener('DOMContentLoaded', () => {
 
     loadChatHistory();
 
+    // Implements the UI for clarification questions
+    function displayClarificationUI(questionText, options, sessionId, originalQuery) {
+        console.log("displayClarificationUI called with:", questionText, options, sessionId, originalQuery);
+
+        addMessageToChat(questionText, 'conrad'); // Display the clarification question
+
+        // Create and display clarification options
+        const optionsContainerId = 'clarification-options-container';
+        let optionsContainer = document.getElementById(optionsContainerId);
+        if (!optionsContainer) {
+            optionsContainer = document.createElement('div');
+            optionsContainer.id = optionsContainerId;
+            chatMessages.appendChild(optionsContainer); // Append to chat messages for visibility
+        }
+        optionsContainer.innerHTML = ''; // Clear previous options
+
+        options.forEach(option => {
+            const button = document.createElement('button');
+            button.textContent = option.text;
+            button.dataset.id = option.id;
+            button.classList.add('clarification-option'); // For styling
+            button.addEventListener('click', () => {
+                handleClarificationSelection(option.id, sessionId, originalQuery);
+                optionsContainer.innerHTML = ''; // Clear options after selection
+            });
+            optionsContainer.appendChild(button);
+        });
+
+        // Disable user input field
+        const userInputField = document.getElementById('message-input');
+        if (userInputField) {
+            userInputField.disabled = true;
+        }
+    }
+
+    // Handles the user's selection from the clarification options
+    async function handleClarificationSelection(selectedOptionId, sessionId, originalQuery) {
+        console.log("handleClarificationSelection called with:", selectedOptionId, sessionId, originalQuery);
+        // Optional: Show what was selected to the user.
+        addMessageToChat('Procesando tu selección...', 'user'); // Using a generic message
+
+        const userInputField = document.getElementById('message-input'); // Use actual ID
+        // Input field is already disabled by displayClarificationUI. It will be re-enabled in finally.
+
+        // Show loading indicator for processing selection
+        loadingIndicator.textContent = "Procesando selección...";
+        loadingIndicator.style.display = 'block';
+        errorMessage.style.display = 'none';
+
+
+        try {
+            const response = await fetch('http://127.0.0.1:8000/chat', { // Use actual backend URL
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question: originalQuery,
+                    session_id: sessionId,
+                    selected_option_id: selectedOptionId
+                })
+            });
+
+            if (!response.ok) {
+                // Try to get error message from backend if available
+                let errorMsg = `HTTP error! Status: ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    // Prefer 'answer' if available and looks like an error message, else 'detail'
+                    errorMsg = errorData.answer && typeof errorData.answer === 'string' ? errorData.answer : (errorData.detail || errorMsg);
+                } catch (e) { /* ignore if error response is not json */ }
+                throw new Error(errorMsg);
+            }
+
+            const data = await response.json();
+            // Assuming this response is always a direct answer as per requirements
+            if (data.needs_clarification === true) {
+                // This case should ideally not happen if backend honors clarification selection
+                console.warn("Received needs_clarification=true after selecting an option.");
+                displayClarificationUI(data.clarification_question_text, data.clarification_options, data.session_id, originalQuery);
+            } else {
+                displayDirectAnswer(data.answer, data.source_urls);
+            }
+
+        } catch (error) {
+            console.error('Error fetching clarification follow-up:', error);
+            // Display error in the chat
+            addMessageToChat(`Lo siento, hubo un error procesando tu selección: ${error.message}`, 'conrad');
+            // Also display in the dedicated error message area if it makes sense
+            errorMessage.textContent = `Error procesando selección: ${error.message}`;
+            errorMessage.classList.add('error-style');
+            errorMessage.style.display = 'block';
+
+        } finally {
+            loadingIndicator.style.display = 'none'; // Hide loading indicator
+            if (userInputField) {
+                userInputField.disabled = false; // Re-enable input
+                userInputField.focus(); // Focus on input field
+            }
+            // Ensure clarification options container is cleared (click handler in displayClarificationUI should also do this)
+            const optionsContainer = document.getElementById('clarification-options-container');
+            if (optionsContainer) {
+                optionsContainer.innerHTML = '';
+            }
+        }
+    }
+
+    // Displays a direct answer from Conrad in the chat.
+    function displayDirectAnswer(answerText, sourceUrls) {
+        // Log for debugging (optional)
+        console.log("Displaying direct answer:", answerText, "Sources:", sourceUrls);
+
+        // Use the existing function to add the message and sources to the chat.
+        // addMessageToChat handles rendering of the answer and clickable source URLs.
+        addMessageToChat(answerText, 'conrad', sourceUrls);
+
+        // Defensive cleanup of clarification UI, in case it wasn't cleared properly.
+        const optionsContainer = document.getElementById('clarification-options-container');
+        if (optionsContainer) {
+            optionsContainer.innerHTML = '';
+        }
+
+        // Re-enabling the input field is handled by the calling functions
+        // (handleSendMessage or handleClarificationSelection) in their respective finally blocks,
+        // or not disabled at all in the case of a direct flow through handleSendMessage.
+    }
+
     async function handleSendMessage() {
         const inputText = messageInput.value.trim();
         if (inputText === '') {
@@ -123,6 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        originalUserQuery = inputText; // Assign trimmed input to originalUserQuery
         addMessageToChat(inputText, 'user');
 
         loadingIndicator.textContent = "Conrad está escribiendo...";
@@ -151,18 +278,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
 
                 if (response.ok) {
-                    addMessageToChat(data.answer, 'conrad', data.source_urls);
+                    if (data.needs_clarification === true) {
+                        displayClarificationUI(data.clarification_question_text, data.clarification_options, data.session_id, originalUserQuery);
+                    } else {
+                        displayDirectAnswer(data.answer, data.source_urls);
+                    }
                 } else {
-                    errorMessage.textContent = `Error: ${data.detail || response.statusText || 'Unknown error from backend'}`;
-                    errorMessage.classList.add('error-style');
-                    errorMessage.style.display = 'block';
+                    // Try to get error message from backend if available
+                    let errorMsg = `Error del servidor: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        // Prefer 'answer' if available and looks like an error message, else 'detail'
+                        errorMsg = errorData.answer && typeof errorData.answer === 'string' ? errorData.answer : (errorData.detail || errorMsg);
+                    } catch (e) { /* ignore if error response is not json */ }
+                    throw new Error(errorMsg);
                 }
             } catch (error) {
-                console.error("Fetch error:", error);
+                console.error("Error in handleSendMessage:", error);
                 loadingIndicator.style.display = 'none';
-                errorMessage.textContent = 'Error de red o backend de Conrad no accesible.';
+                
+                const displayErrorMessage = error.message || 'Error de red o backend no accesible.';
+                errorMessage.textContent = displayErrorMessage;
                 errorMessage.classList.add('error-style');
                 errorMessage.style.display = 'block';
+                // Add error message to chat for visibility
+                addMessageToChat(`Lo siento, ocurrió un error: ${displayErrorMessage}`, 'conrad');
             } finally {
                 if (document.activeElement !== messageInput) {
                     messageInput.focus();
