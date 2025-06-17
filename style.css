@@ -270,3 +270,42 @@ a:hover {
 }
 */
 /* Styles for icons in header were added above for #settings-link and #clear-chat-button */
+
+/* Clarification Options Styling */
+#clarification-options-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* Align buttons to the left like Conrad messages */
+  margin-top: 10px;
+  margin-bottom: 10px;
+  gap: 8px; /* Adds space between option buttons */
+}
+
+.clarification-option {
+  background-color: var(--conrad-message-bg); /* Uses Conrad's background */
+  color: var(--conrad-message-text);           /* Uses Conrad's text color */
+  border: 1px solid var(--border-color);       /* Subtle border */
+  padding: 8px 15px;                           /* Padding */
+  border-radius: 20px;                         /* Pill shape for buttons */
+  margin: 0;                                   /* Remove default button margin, gap handles spacing */
+  cursor: pointer;
+  text-align: left;
+  display: inline-block;                       /* Allows button to size to content but can be laid out */
+  width: auto;                                 /* More explicit than fit-content for some browsers */
+  max-width: 100%;                             /* Don't overflow container */
+  transition: background-color 0.2s ease, border-color 0.2s ease; /* Smooth hover */
+  font-size: 0.9em;                            /* Slightly smaller font than main messages */
+  line-height: 1.4;                            /* Consistent line height */
+}
+
+/* Hover effect for light mode (default) */
+:not(.dark-mode) .clarification-option:hover {
+  background-color: #e0e0e0; /* Slightly darker than default --conrad-message-bg #f0f0f0 */
+  border-color: var(--input-focus-border); /* Highlight border */
+}
+
+/* Hover effect for dark mode */
+.dark-mode .clarification-option:hover {
+  background-color: #4a4a4a; /* Slightly lighter than dark mode --conrad-message-bg #3a3a3a */
+  border-color: var(--input-focus-border); /* Highlight border */
+}
