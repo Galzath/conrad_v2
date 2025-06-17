@@ -23,18 +23,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Saves the current chat history to sessionStorage
-    function saveChatHistory() {
-
-        console.log("saveChatHistory: Attempting to save. Current chatHistory:", JSON.parse(JSON.stringify(chatHistory))); // Deep copy for logging
-        try {
-            const jsonHistory = JSON.stringify(chatHistory);
-            sessionStorage.setItem('conradChatHistory', jsonHistory);
-            console.log("saveChatHistory: Successfully saved to sessionStorage. JSON:", jsonHistory);
-        } catch (e) {
-            console.error("saveChatHistory: Error saving chat history to sessionStorage:", e, "chatHistory state:", chatHistory);
-        }
+// Saves the current chat history to chrome.storage.session
+function saveChatHistory() {
+    console.log("saveChatHistory: Attempting to save to chrome.storage.session. Current chatHistory:", JSON.parse(JSON.stringify(chatHistory)));
+    try {
+        // chatHistory is an array of objects. JSON.stringify will handle it.
+        chrome.storage.session.set({ conradChatHistory: chatHistory }, () => {
+            if (chrome.runtime.lastError) {
+                console.error("saveChatHistory: Error saving to chrome.storage.session:", chrome.runtime.lastError.message, "chatHistory state:", JSON.parse(JSON.stringify(chatHistory)));
+            } else {
+                console.log("saveChatHistory: Successfully saved to chrome.storage.session. chatHistory item count:", chatHistory.length);
+            }
+        });
+    } catch (e) {
+        // This catch is primarily for errors if chatHistory itself is in a state that causes JSON.stringify to fail (unlikely for simple objects)
+        // or any other synchronous error before the async call.
+        console.error("saveChatHistory: Synchronous error before calling chrome.storage.session.set:", e, "chatHistory state:", JSON.parse(JSON.stringify(chatHistory)));
     }
+}
 
     // Renders a message to the chat DOM
     function renderMessage(text, sender, sourceUrls = []) {
@@ -76,44 +82,90 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Loads chat history from sessionStorage and renders it
-    function loadChatHistory() {
-        console.log("loadChatHistory: Attempting to load history.");
-        const storedHistory = sessionStorage.getItem('conradChatHistory');
-        console.log("loadChatHistory: Raw data from sessionStorage:", storedHistory);
+    // Loads chat history from chrome.storage.session and renders it
+function loadChatHistory() {
+    console.log("loadChatHistory: Attempting to load history from chrome.storage.session.");
 
-        if (storedHistory) {
-            try {
-                const parsedHistory = JSON.parse(storedHistory);
-                console.log("loadChatHistory: Parsed history from sessionStorage:", parsedHistory);
-                if (Array.isArray(parsedHistory)) {
-                    chatHistory = parsedHistory;
-                    console.log("loadChatHistory: Global chatHistory array populated:", JSON.parse(JSON.stringify(chatHistory)));
-
-                    // Clear existing messages before rendering loaded history
-                    chatMessages.innerHTML = ''; // Clear display before rendering loaded history
-
-                    chatHistory.forEach(message => {
-                        renderMessage(message.text, message.sender, message.sourceUrls);
-                    });
-                    console.log("loadChatHistory: Rendered messages from loaded history.");
-                } else {
-                    console.error("loadChatHistory: Stored chat history is not an array. Resetting chatHistory.", parsedHistory);
-                    chatHistory = [];
-                    chatMessages.innerHTML = ''; // Ensure display is also cleared
-                }
-            } catch (e) {
-                console.error("loadChatHistory: Error parsing chat history from sessionStorage:", e, "Raw data:", storedHistory);
-                chatHistory = [];
-                chatMessages.innerHTML = ''; // Ensure display is also cleared
-            }
-        } else {
-            console.log("loadChatHistory: No history found in sessionStorage.");
-            // chatHistory remains empty, which is the default.
-            // Display should also be empty if no history.
-            chatMessages.innerHTML = '';
+    chrome.storage.session.get(['conradChatHistory'], (items) => {
+        if (chrome.runtime.lastError) {
+            console.error("loadChatHistory: Error loading from chrome.storage.session:", chrome.runtime.lastError.message);
+            chatHistory = []; // Reset chat history on error
+            chatMessages.innerHTML = ''; // Ensure display is cleared
+            handleHistoryLoadingFinished(); // Call finish handler even on error
+            return;
         }
+
+        const retrievedHistory = items.conradChatHistory;
+        // No JSON.parse needed as chrome.storage stores objects directly if they were set as objects.
+        console.log("loadChatHistory: Data retrieved from chrome.storage.session. Item count:", retrievedHistory ? retrievedHistory.length : 'undefined');
+
+        if (retrievedHistory && Array.isArray(retrievedHistory)) {
+            chatHistory = retrievedHistory;
+            console.log("loadChatHistory: Global chatHistory array populated. Item count:", chatHistory.length);
+
+            chatMessages.innerHTML = ''; // Clear display before rendering loaded history
+
+            chatHistory.forEach(message => {
+                if (typeof message === 'object' && message !== null && 'text' in message && 'sender' in message) {
+                    renderMessage(message.text, message.sender, message.sourceUrls);
+                } else {
+                    console.warn("loadChatHistory: Invalid message object in stored history:", message);
+                }
+            });
+            console.log("loadChatHistory: Rendered messages from loaded history.");
+        } else {
+            if (retrievedHistory) { // It exists but is not an array or null
+                console.error("loadChatHistory: Stored chat history is not a valid array. Resetting chatHistory.", retrievedHistory);
+            } else { // undefined or null
+                console.log("loadChatHistory: No history found or history is null in chrome.storage.session.");
+            }
+            chatHistory = []; // Reset or initialize chat history
+            chatMessages.innerHTML = ''; // Ensure display is also cleared
+        }
+        handleHistoryLoadingFinished(); // Call finish handler after processing
+    });
+}
+
+// This function consolidates what happens after chat history is loaded or initialized
+function handleHistoryLoadingFinished() {
+    console.log("handleHistoryLoadingFinished: Chat history loading process complete. Current history length:", chatHistory.length);
+
+    // Logic to display initial welcome message if chat is empty
+    if (chatHistory.length === 0) {
+        // This part depends on other variables like 'errorMessage' being available in this scope
+        // Ensure 'errorMessage' and 'addMessageToChat' are accessible.
+        // They are defined in the outer scope of DOMContentLoaded, so they should be.
+        chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (settingsItems) => {
+            if (chrome.runtime.lastError) {
+                console.error("handleHistoryLoadingFinished: Error loading settings for initial message:", chrome.runtime.lastError.message);
+                return;
+            }
+            const isConfigured = settingsItems.confluenceUrl && settingsItems.geminiKey;
+            if (isConfigured) {
+                addMessageToChat("¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?", 'conrad');
+            } else {
+                // Assuming 'errorMessage' is the DOM element for error messages
+                if (errorMessage) {
+                    errorMessage.textContent = "Configuración incompleta. Por favor, ve a Configuración.";
+                    errorMessage.classList.remove('error-style'); // Ensure no error style for this message
+                    errorMessage.style.color = ''; // Reset potential inline styles
+                    errorMessage.style.backgroundColor = ''; // Reset potential inline styles
+                    errorMessage.style.display = 'block';
+                } else {
+                    console.error("handleHistoryLoadingFinished: errorMessage DOM element not found.");
+                }
+            }
+        });
     }
+
+    // Ensure the message input is focused
+    // Assuming 'messageInput' is the DOM element for the message input field
+    if (messageInput) {
+        messageInput.focus();
+    } else {
+        console.error("handleHistoryLoadingFinished: messageInput DOM element not found.");
+    }
+}
 
     loadChatHistory();
 
@@ -139,11 +191,18 @@ document.addEventListener('DOMContentLoaded', () => {
             button.dataset.id = option.id;
             button.classList.add('clarification-option'); // For styling
             button.addEventListener('click', () => {
+                addMessageToChat(`Tu selección: "${option.text.substring(0, 50)}..."`, 'user');
                 handleClarificationSelection(option.id, sessionId, originalQuery);
                 optionsContainer.innerHTML = ''; // Clear options after selection
             });
             optionsContainer.appendChild(button);
         });
+
+        // Ensure chatMessages is scrolled to the bottom to show the new options
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            console.log("Scrolled chatMessages to bottom after adding clarification options.");
+        }
 
         // Disable user input field
         const userInputField = document.getElementById('message-input');
@@ -156,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function handleClarificationSelection(selectedOptionId, sessionId, originalQuery) {
         console.log("handleClarificationSelection called with:", selectedOptionId, sessionId, originalQuery);
         // Optional: Show what was selected to the user.
-        addMessageToChat('Procesando tu selección...', 'user'); // Using a generic message
+        // addMessageToChat('Procesando tu selección...', 'user'); // Using a generic message // MODIFIED: This line is removed
 
         const userInputField = document.getElementById('message-input'); // Use actual ID
         // Input field is already disabled by displayClarificationUI. It will be re-enabled in finally.
@@ -319,26 +378,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    if (chatHistory.length === 0) {
-        chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
-            if (chrome.runtime.lastError) {
-                console.error("Error loading settings for initial message:", chrome.runtime.lastError.message);
-                return;
-            }
-            const isConfigured = items.confluenceUrl && items.geminiKey;
-            if (isConfigured) {
-                addMessageToChat("¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?", 'conrad');
-            } else {
-                errorMessage.textContent = "Configuración incompleta. Por favor, ve a Configuración.";
-                errorMessage.classList.remove('error-style');
-                errorMessage.style.color = '';
-                errorMessage.style.backgroundColor = '';
-                errorMessage.style.display = 'block';
-            }
-        });
-    }
-
-    messageInput.focus();
+    // The initial message logic is now inside handleHistoryLoadingFinished,
+    // so the block that was here is removed.
+    // messageInput.focus() is also called inside handleHistoryLoadingFinished.
 
     messageInput.addEventListener('input', () => {
         const currentMessage = errorMessage.textContent;
@@ -351,36 +393,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event listener for the Clear Chat button
     if (clearChatButton) {
         clearChatButton.addEventListener('click', () => {
+            console.log("Clear Chat button clicked.");
             chatHistory = []; // Clear the global JS array
-            sessionStorage.removeItem('conradChatHistory'); // Clear from sessionStorage
-            chatMessages.innerHTML = ''; // Clear the DOM display
-            console.log("Chat history cleared.");
+            chatMessages.innerHTML = ''; // Clear the DOM display immediately
 
-            // Reset error message display before showing potential new message
-            errorMessage.style.display = 'none';
-            errorMessage.textContent = '';
-            errorMessage.classList.remove('error-style');
+            // Reset error message display (can be done early)
+            if (errorMessage) { // Ensure errorMessage element exists
+                errorMessage.style.display = 'none';
+                errorMessage.textContent = '';
+                errorMessage.classList.remove('error-style');
+            }
 
-            // Optionally, re-display initial welcome message or config status
-            chrome.storage.local.get(['confluenceUrl', 'geminiKey'], (items) => {
+            chrome.storage.session.remove('conradChatHistory', () => {
                 if (chrome.runtime.lastError) {
-                    console.error("Error loading settings for initial message after clear:", chrome.runtime.lastError.message);
-                    return;
-                }
-                const isConfigured = items.confluenceUrl && items.geminiKey;
-                if (isConfigured) {
-                    // Call addMessageToChat to add welcome and save it (as it's a new session start)
-                    addMessageToChat("¡Hola! Soy Conrad, tu asistente virtual para la biblioteca de Confluence. ¿En qué te puedo ayudar hoy?", 'conrad');
+                    console.error("Error removing chat history from chrome.storage.session:", chrome.runtime.lastError.message);
                 } else {
-                    errorMessage.textContent = "Configuración incompleta. Por favor, ve a Configuración.";
-                    // Ensure neutral styling for config message
-                    errorMessage.classList.remove('error-style');
-                    errorMessage.style.color = '';
-                    errorMessage.style.backgroundColor = '';
-                    errorMessage.style.display = 'block';
+                    console.log("Chat history successfully removed from chrome.storage.session.");
                 }
+                // After removal (or attempted removal), re-run the logic for an empty chat.
+                // handleHistoryLoadingFinished will check chatHistory (which is now empty)
+                // and display the appropriate initial message and focus input.
+                handleHistoryLoadingFinished();
             });
-            messageInput.focus();
         });
     }
 });

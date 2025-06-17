@@ -321,7 +321,7 @@ def generate_clarification_from_results(
         if len(query_context_words) > 7:
             query_context += "..."
 
-        question_text = f"Your query about '{query_context}' returned information on different topics. Which specific area are you interested in?"
+        question_text = f"Tu consulta sobre '{query_context}' arrojó información sobre diferentes temas. ¿En qué área específica estás interesado/a?"
 
         clarification_dict_to_return = {
             "question_text": question_text,
