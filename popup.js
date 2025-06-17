@@ -198,6 +198,12 @@ function handleHistoryLoadingFinished() {
             optionsContainer.appendChild(button);
         });
 
+        // Ensure chatMessages is scrolled to the bottom to show the new options
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            console.log("Scrolled chatMessages to bottom after adding clarification options.");
+        }
+
         // Disable user input field
         const userInputField = document.getElementById('message-input');
         if (userInputField) {
