@@ -172,9 +172,9 @@ function handleHistoryLoadingFinished() {
     // Implements the UI for clarification questions
     function displayClarificationUI(questionText, options, sessionId, originalQuery) {
         console.log("displayClarificationUI called with:", questionText, options, sessionId, originalQuery);
-        // console.log("Received options for display:", JSON.stringify(options, null, 2));
-        // console.log("Is 'options' an array?", Array.isArray(options));
-        // if(Array.isArray(options)) { console.log("Number of options received:", options.length); }
+        console.log("Received options for display:", JSON.stringify(options, null, 2));
+        console.log("Is 'options' an array?", Array.isArray(options));
+        if(Array.isArray(options)) { console.log("Number of options received:", options.length); }
 
         if (!options || !Array.isArray(options) || options.length === 0) {
             console.error("displayClarificationUI: No valid options provided or options array is empty. Cannot render option buttons.", options);
@@ -192,10 +192,8 @@ function handleHistoryLoadingFinished() {
             chatMessages.appendChild(optionsContainer); // Append to chat messages for visibility
         }
         optionsContainer.innerHTML = ''; // Clear previous options
-        // console.log("Options container element:", optionsContainer);
-
         options.forEach(option => {
-            // console.log("Processing option:", JSON.stringify(option, null, 2));
+            console.log("Processing option:", JSON.stringify(option, null, 2));
             if (typeof option !== 'object' || option === null || !option.text || !option.id) {
                 console.error('displayClarificationUI: Skipping invalid or incomplete option object during button creation:', JSON.stringify(option, null, 2));
                 return;
@@ -213,6 +211,7 @@ function handleHistoryLoadingFinished() {
                 handleClarificationSelection(option.id, sessionId, originalQuery);
                 optionsContainer.innerHTML = ''; // Clear options after selection
             });
+
             // console.log("Appending button:", button.outerHTML);
             optionsContainer.appendChild(button);
         });
@@ -231,6 +230,7 @@ function handleHistoryLoadingFinished() {
             // This case might be redundant if addMessageToChat already scrolled, but safe.
             chatMessages.scrollTop = chatMessages.scrollHeight;
             console.log("Scrolled chatMessages to bottom (no new options to reflow/async scroll for).");
+
         }
 
         // Disable user input field
