@@ -139,6 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
             button.dataset.id = option.id;
             button.classList.add('clarification-option'); // For styling
             button.addEventListener('click', () => {
+                addMessageToChat(`Tu selección: "${option.text.substring(0, 50)}..."`, 'user');
                 handleClarificationSelection(option.id, sessionId, originalQuery);
                 optionsContainer.innerHTML = ''; // Clear options after selection
             });
@@ -156,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function handleClarificationSelection(selectedOptionId, sessionId, originalQuery) {
         console.log("handleClarificationSelection called with:", selectedOptionId, sessionId, originalQuery);
         // Optional: Show what was selected to the user.
-        addMessageToChat('Procesando tu selección...', 'user'); // Using a generic message
+        // addMessageToChat('Procesando tu selección...', 'user'); // Using a generic message // MODIFIED: This line is removed
 
         const userInputField = document.getElementById('message-input'); // Use actual ID
         // Input field is already disabled by displayClarificationUI. It will be re-enabled in finally.
