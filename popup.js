@@ -192,8 +192,6 @@ function handleHistoryLoadingFinished() {
             chatMessages.appendChild(optionsContainer); // Append to chat messages for visibility
         }
         optionsContainer.innerHTML = ''; // Clear previous options
-        console.log("Options container element:", optionsContainer);
-
         options.forEach(option => {
             console.log("Processing option:", JSON.stringify(option, null, 2));
             if (typeof option !== 'object' || option === null || !option.text || !option.id) {
@@ -213,14 +211,26 @@ function handleHistoryLoadingFinished() {
                 handleClarificationSelection(option.id, sessionId, originalQuery);
                 optionsContainer.innerHTML = ''; // Clear options after selection
             });
-            console.log("Appending button:", button.outerHTML);
+
+            // console.log("Appending button:", button.outerHTML);
             optionsContainer.appendChild(button);
         });
 
-        // Ensure chatMessages is scrolled to the bottom to show the new options
-        if (chatMessages) {
+        // Attempt to force reflow and then scroll asynchronously
+        if (optionsContainer && optionsContainer.hasChildNodes() && chatMessages) { // Ensure optionsContainer has children before reflow
+            optionsContainer.offsetHeight; // Trigger reflow (value is not used, just the access)
+            // console.log("Forcing reflow by reading optionsContainer.offsetHeight:", optionsContainer.offsetHeight); // Trigger reflow
+
+            setTimeout(() => {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                console.log("Scrolled chatMessages to bottom after adding clarification options (async).");
+            }, 0); // Defer scroll to next event loop tick
+        } else if (chatMessages) {
+            // If no options were added, still ensure any prior message (like Conrad's question) is scrolled to.
+            // This case might be redundant if addMessageToChat already scrolled, but safe.
             chatMessages.scrollTop = chatMessages.scrollHeight;
-            console.log("Scrolled chatMessages to bottom after adding clarification options.");
+            console.log("Scrolled chatMessages to bottom (no new options to reflow/async scroll for).");
+
         }
 
         // Disable user input field
