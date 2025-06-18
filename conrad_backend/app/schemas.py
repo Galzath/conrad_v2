@@ -18,6 +18,9 @@ class ChatResponse(BaseModel):
     needs_clarification: Optional[bool] = False # Flag if clarification is needed
     clarification_question_text: Optional[str] = None # The clarification question itself
     clarification_options: Optional[List[ClarificationOption]] = None # List of options for the user
+    clarification_type: Optional[str] = None
+    available_spaces: Optional[List[ClarificationOption]] = None # For listing Confluence spaces
+    remaining_topics: Optional[List[ClarificationOption]] = None # For suggesting related pages after an answer
     # Optional fields for providing source/context information
     source_urls: Optional[list[str]] = None # Kept for consistency, using list generic for Python 3.9+
     debug_info: Optional[dict] = None

@@ -25,43 +25,7 @@ The backend is built using FastAPI and is structured into several key components
 
 ### API Endpoints
 
-The backend exposes the following API endpoints:
-
--   **`POST /chat`**
-    -   **Description**: This is the primary endpoint for interacting with the chatbot. It receives a user's question, orchestrates the search for relevant context in Confluence, generates an answer using the Gemini API, and returns the answer along with URLs of the Confluence pages used as sources.
-    -   **Request Body** (`application/json`):
-        ```json
-        {
-            "question": "Your question here"
-        }
-        ```
-    -   **Response Body** (`application/json`):
-        ```json
-        {
-            "answer": "The AI-generated answer.",
-            "source_urls": ["url_to_confluence_page_1", "url_to_confluence_page_2"]
-        }
-        ```
-
--   **`GET /health`**
-    -   **Description**: This endpoint provides a health check of the API. It can be used to monitor the status of the application and its core services (Confluence and Gemini).
-    -   **Response Body** (`application/json` - on success):
-        ```json
-        {
-            "status": "ok",
-            "confluence_service": "initialized",
-            "gemini_service": "initialized"
-        }
-        ```
-    -   **Response Body** (`application/json` - on error, e.g., if a service failed to initialize):
-        ```json
-        {
-            "status": "error",
-            "confluence_service": "error_initializing", // example status
-            "gemini_service": "initialized",      // example status
-            "detail": "One or more critical services are not available."
-        }
-        ```
+The backend exposes `/chat` (POST) and `/health` (GET) endpoints. For detailed information on request/response structures and usage, please refer to the [API Endpoints section in the main README.md](README.md#api-endpoints).
 
 ## Technologies Used
 
@@ -77,8 +41,18 @@ The Conrad Chatbot Backend leverages several key Python technologies and librari
 
 ## Dependencies
 
-The project relies on the following Python packages, as listed in `requirements.txt`:
+The project relies on the following Python packages (as listed in `requirements.txt`):
 
+-   **`fastapi`**: Core framework for building the API.
+-   **`uvicorn[standard]`**: ASGI server for running the FastAPI application. The `[standard]` option includes recommended extras like `httptools` for faster parsing.
+-   **`requests`**: A simple HTTP library; may be a sub-dependency or used for other HTTP interactions.
+-   **`google-generativeai`**: SDK for interacting with Google's Gemini API.
+-   **`python-dotenv`**: For loading environment variables from a `.env` file.
+-   **`atlassian-python-api`**: Client library for Confluence API interaction.
+-   **`pydantic`**: Used for data validation, serialization, and settings management.
+-   **`beautifulsoup4`**: For parsing HTML content from Confluence pages.
+
+Raw `requirements.txt` content:
 ```
 fastapi
 uvicorn[standard]
@@ -90,20 +64,9 @@ pydantic
 beautifulsoup4
 ```
 
-### Key Dependency Roles:
-
--   **`fastapi`**: Core framework for building the API.
--   **`uvicorn[standard]`**: ASGI server for running the FastAPI application. The `[standard]` option includes recommended extras like `httptools` for faster parsing and `websockets` support (though not directly used in this project's current scope).
--   **`requests`**: A simple, yet elegant HTTP library for Python. While `atlassian-python-api` and `google-generativeai` handle their own HTTP communications, `requests` might be included as a dependency of one of these, or it could be available for other potential HTTP interactions.
--   **`google-generativeai`**: SDK for interacting with Google's Gemini API.
--   **`python-dotenv`**: For loading environment variables from a `.env` file.
--   **`atlassian-python-api`**: Client library for Confluence API interaction.
--   **`pydantic`**: Used for data validation, serialization, and settings management.
--   **`beautifulsoup4`**: For parsing HTML content from Confluence pages.
-
 ## Setup and Running
 
-For detailed instructions on setting up the development environment, installing dependencies, and running the application, please refer to the main `README.md` file located in the `conrad_backend` root directory.
+For detailed instructions on setting up the development environment, installing dependencies, and running the application, please refer to the main [README.md](README.md) file.
 
 ### Key Configuration: Environment Variables
 
@@ -115,3 +78,46 @@ A crucial part of the setup is configuring the environment variables. The applic
 -   `GEMINI_API_KEY`: Your API key for Google's Gemini API. This is required to authenticate requests to the Gemini service for response generation.
 
 Ensure these variables are correctly set in your `.env` file before attempting to run the application. Refer to the `README.md` for guidance on creating the `.env` file (e.g., by copying from an `.env.example` if one is provided).
+
+## Basic Testing (Conceptual)
+
+While full tests are not yet implemented, here's an outline of tests that should be developed:
+
+### Unit Tests
+
+-   **`app.core.config`**:
+    -   Test that settings are loaded correctly from environment variables.
+    -   Test default values if environment variables are not set (if applicable).
+-   **`app.schemas`**:
+    -   Test Pydantic model validation (e.g., `UserQuestion` requires a `question` field).
+-   **`app.services.confluence_service`**:
+    -   Mock `atlassian.Confluence` and `BeautifulSoup`.
+    -   Test `__init__` for successful connection and connection failure.
+    -   Test `search_content` with various mock API responses (successful search, no results, API error).
+    -   Test `get_page_content_by_id` with various mock API responses (successful content retrieval, page not found, API error, different content formats).
+    -   Test HTML parsing logic.
+-   **`app.services.gemini_service`**:
+    -   Mock `google.generativeai.GenerativeModel`.
+    -   Test `__init__` for successful client initialization and API key error.
+    -   Test `generate_response` with various mock API responses (successful generation, API error, blocked prompt).
+    -   Test prompt formatting.
+
+### Integration Tests
+
+-   **`app.main` (API Endpoints)**:
+    -   Use `TestClient` from FastAPI.
+    -   Test the `/chat` endpoint:
+        -   Mock `ConfluenceService` and `GeminiService` to control their behavior.
+        -   Test successful flow: question -> Confluence search -> Gemini response.
+        -   Test scenarios:
+            -   Confluence finds no documents.
+            -   Confluence finds documents, but content extraction fails.
+            -   Gemini returns an error.
+            -   Confluence service unavailable.
+            -   Gemini service unavailable.
+        -   Test request validation (e.g., missing `question` field).
+    -   Test the `/health` endpoint under different service availability conditions.
+-   **Service Integration**:
+    -   Potentially, tests that verify the interaction *between* `ConfluenceService` and `GeminiService` via `main.py`, but with external APIs (Confluence, Gemini) mocked at a lower level (e.g., using `httpx` mocks if `requests` or `aiohttp` were used directly, or patching the respective SDK methods).
+
+This conceptual outline provides a starting point for developing a comprehensive test suite.

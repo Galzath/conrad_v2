@@ -180,6 +180,31 @@ class ConfluenceService:
             logger.error(f"Error fetching/parsing page {page_id}: {e}")
         return ""
 
+    def get_available_spaces(self, limit: int = 200) -> list[dict]:
+        if not self.confluence:
+            logger.error("Confluence client not initialized. Cannot get available spaces.")
+            return []
+        try:
+            logger.info(f"Fetching available Confluence spaces (limit: {limit}).")
+            # Using space_type='global' to fetch standard spaces.
+            # The limit is set to a high number, but pagination might be needed for instances with more spaces.
+            response = self.confluence.get_all_spaces(space_type='global', start=0, limit=limit)
+
+            spaces = []
+            if response and 'results' in response:
+                for space in response['results']:
+                    spaces.append({
+                        "id": space['key'],  # Space key is usually the ID needed for CQL
+                        "text": space['name'] # Space name for display
+                    })
+                logger.info(f"Successfully fetched {len(spaces)} global spaces.")
+            else:
+                logger.warning("No spaces found or unexpected response format from get_all_spaces.")
+            return spaces
+        except Exception as e:
+            logger.error(f"Error fetching available Confluence spaces: {e}", exc_info=True)
+            return []
+
     def semantic_search_chunks(self, query_text: str, top_k: int = 5) -> list[dict]:
         if not self.faiss_index or not self.chunk_metadata or not self.embedding_model_for_query or self.faiss_index.ntotal == 0:
             logger.info("Semantic search components not available or index is empty. Skipping semantic search.")
