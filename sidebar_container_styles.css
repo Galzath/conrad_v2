@@ -1,0 +1,8 @@
+/* sidebar_container_styles.css */
+/* This file can be used to style the iframe container itself, if needed, */
+/* e.g., if it were wrapped in another div by the content script. */
+/* For now, styling is applied directly to the iframe via JavaScript in content_script.js. */
+
+/* Example: If you wanted a specific body class when sidebar is active */
+/* body.conrad-sidebar-active { margin-right: 360px; } */
+/* This would require the content script to add/remove this class from body. */
