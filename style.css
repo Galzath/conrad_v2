@@ -5,10 +5,10 @@ body.popup-body {
   padding: 0; /* Removed fixed padding, handled by chat-container */
   background-color: var(--bg-color);
   color: var(--text-color);
-  width: 350px; /* Default width for the popup */
+  width: 350px; /* Reverted to popup width */ /* Default width for the popup */
   display: flex; /* Use flexbox for main layout */
   flex-direction: column; /* Stack chat container and input area vertically */
-  max-height: 500px; /* Max height for the popup, helps with scroll */
+  max-height: 500px; /* Reverted to original popup max-height */ /* Max height for the popup, helps with scroll */
   overflow: hidden; /* Prevent body itself from scrolling */
 }
 

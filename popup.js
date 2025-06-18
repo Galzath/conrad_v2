@@ -284,7 +284,7 @@ function handleHistoryLoadingFinished() {
                 console.warn("Received needs_clarification=true after selecting an option.");
                 displayClarificationUI(data.clarification_question_text, data.clarification_options, data.session_id, originalQuery);
             } else {
-                displayDirectAnswer(data.answer, data.source_urls);
+                displayDirectAnswer(data);
             }
 
         } catch (error) {
@@ -310,24 +310,48 @@ function handleHistoryLoadingFinished() {
         }
     }
 
-    // Displays a direct answer from Conrad in the chat.
-    function displayDirectAnswer(answerText, sourceUrls) {
-        // Log for debugging (optional)
-        console.log("Displaying direct answer:", answerText, "Sources:", sourceUrls);
+    // Displays a direct answer from Conrad and potentially offers related topics.
+    function displayDirectAnswer(data) { // Signature changed to accept the whole data object
+        console.log("Displaying direct answer. Data received:", data);
 
-        // Use the existing function to add the message and sources to the chat.
-        // addMessageToChat handles rendering of the answer and clickable source URLs.
-        addMessageToChat(answerText, 'conrad', sourceUrls);
+        // Display the main answer and sources
+        addMessageToChat(data.answer, 'conrad', data.source_urls);
 
-        // Defensive cleanup of clarification UI, in case it wasn't cleared properly.
+        // Defensive cleanup of any previous clarification UI
         const optionsContainer = document.getElementById('clarification-options-container');
         if (optionsContainer) {
             optionsContainer.innerHTML = '';
         }
 
-        // Re-enabling the input field is handled by the calling functions
-        // (handleSendMessage or handleClarificationSelection) in their respective finally blocks,
-        // or not disabled at all in the case of a direct flow through handleSendMessage.
+        // Check if related topics/follow-up clarification is needed
+        if (data.needs_clarification === true &&
+            data.clarification_type === "related_topics_followup" && // Ensure backend sends this type
+            data.clarification_question_text &&
+            data.clarification_options && data.clarification_options.length > 0) {
+
+            console.log("Offering related topics/follow-up clarification.");
+            // originalUserQuery is a global variable in popup.js, should be accessible
+            // It holds the initial query that led to this interaction sequence.
+            // For related topics, originalUserQuery might be less relevant if the user is branching off.
+            // The backend might need to manage the "true" original query if it changes contextually.
+            // For now, we pass originalUserQuery as it's expected by displayClarificationUI.
+            displayClarificationUI(
+                data.clarification_question_text,
+                data.clarification_options,
+                data.session_id,
+                originalUserQuery // originalUserQuery is from the outer scope
+            );
+        } else {
+            // If no follow-up clarification, ensure input field is enabled (might be disabled from previous step)
+            // This is typically handled by the finally block of the calling async function (handleSendMessage or handleClarificationSelection)
+            // but an extra check here won't harm if this function could be called from other contexts in the future.
+            const userInputField = document.getElementById('message-input');
+            if (userInputField && userInputField.disabled) {
+                console.log("displayDirectAnswer: No follow-up, ensuring input field is enabled.");
+                userInputField.disabled = false;
+                userInputField.focus();
+            }
+        }
     }
 
     async function handleSendMessage() {
@@ -369,7 +393,7 @@ function handleHistoryLoadingFinished() {
                     if (data.needs_clarification === true) {
                         displayClarificationUI(data.clarification_question_text, data.clarification_options, data.session_id, originalUserQuery);
                     } else {
-                        displayDirectAnswer(data.answer, data.source_urls);
+                        displayDirectAnswer(data);
                     }
                 } else {
                     // Try to get error message from backend if available
