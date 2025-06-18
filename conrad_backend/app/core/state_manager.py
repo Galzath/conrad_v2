@@ -13,6 +13,9 @@ class SessionData(BaseModel):
     extracted_terms: Dict[str, List[str]]
     # Using List[Dict[str, Any]] for search results, allowing flexibility for various keys like id, title, url
     initial_search_results: List[Dict[str, Any]]
+    available_spaces: Optional[List[Dict[str, str]]] = None # Spaces offered for selection
+    selected_space_key: Optional[str] = None      # Space key chosen by user
+    clarification_type: Optional[str] = None      # Type of current clarification (e.g., space_selection)
     clarification_question_asked: Optional[str] = None
     # Using List[Dict[str, str]] for clarification options as specified, e.g., [{"id": "opt1", "text": "Option 1"}]
     clarification_options_provided: Optional[List[Dict[str, str]]] = None

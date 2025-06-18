@@ -4,11 +4,29 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 import re
 from collections import Counter
+import time # Ensure time is imported
 
 from .schemas import UserQuestion, ChatResponse
 from .services.confluence_service import ConfluenceService
 from .services.gemini_service import GeminiService
 from .core.config import settings
+
+# Fallback settings values if not defined in core.config
+if not hasattr(settings, 'MAX_CONTEXT_LENGTH_GEMINI'):
+    settings.MAX_CONTEXT_LENGTH_GEMINI = 15000
+if not hasattr(settings, 'N_SEMANTIC_RESULTS'):
+    settings.N_SEMANTIC_RESULTS = 5
+if not hasattr(settings, 'N_CQL_RESULTS'):
+    settings.N_CQL_RESULTS = 3
+if not hasattr(settings, 'K_CANDIDATES_FOR_RERANKING'):
+    settings.K_CANDIDATES_FOR_RERANKING = 25
+# MAX_RESULTS_FOR_CONTEXT calculation
+if hasattr(settings, 'K_CANDIDATES_FOR_RERANKING'):
+    if not hasattr(settings, 'MAX_RESULTS_FOR_CONTEXT'):
+        settings.MAX_RESULTS_FOR_CONTEXT = settings.K_CANDIDATES_FOR_RERANKING + 10
+else:
+    if not hasattr(settings, 'MAX_RESULTS_FOR_CONTEXT'):
+        settings.MAX_RESULTS_FOR_CONTEXT = 30
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,7 +76,7 @@ async def startup_event():
     logger.info("Confluence and Gemini services initialized (or attempted).")
 
 # Ensure List, Dict, Any, Optional are imported if not already at the top
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional # This line is fine
 from sentence_transformers import CrossEncoder
 import numpy as np # numpy is used for cross_encoder scores potentially
 
@@ -70,6 +88,20 @@ import numpy as np # numpy is used for cross_encoder scores potentially
 # ...
 
 # Load Cross-Encoder Model
+# Moved this section up to be before helper functions, as it's an initialization step.
+# logger.info("Loading Cross-Encoder model...") # Already exists
+# try:
+#     cross_encoder_model_name = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+#     cross_encoder = CrossEncoder(cross_encoder_model_name)
+#     logger.info(f"Cross-Encoder model '{cross_encoder_model_name}' loaded successfully.")
+# except Exception as e:
+#     logger.error(f"Failed to load Cross-Encoder model '{cross_encoder_model_name}': {e}", exc_info=True)
+#     cross_encoder = None
+# The above block is effectively moved, so no direct replacement here, but ensuring the new structure is okay.
+# The original block is fine where it is if not explicitly moved by other changes.
+# For now, I will assume this block stays and the new chat endpoint is inserted later.
+# The full overwrite attempted to move it. A targeted diff won't.
+
 logger.info("Loading Cross-Encoder model...")
 try:
     cross_encoder_model_name = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
@@ -342,216 +374,243 @@ async def chat_endpoint(user_question: UserQuestion = Body(...)):
         logger.error("Backend services unavailable: Confluence or Gemini failed to initialize.")
         raise HTTPException(status_code=503, detail="Uno o más servicios de backend no están disponibles.")
 
-    max_context_length = 15000
+    max_context_length = settings.MAX_CONTEXT_LENGTH_GEMINI
     current_session_id = user_question.session_id
-    proceed_as_new_question = True # Flag to control flow
+    original_query_from_user = user_question.question
 
-    try: # ADDED TRY HERE
-        # A. Handling Follow-up Request (User's answer to clarification)
-        if current_session_id and (user_question.clarification_response or user_question.selected_option_id):
-            logger.info(f"Handling follow-up for session ID: {current_session_id}")
-            retrieved_session_data = get_session(current_session_id)
+    session_data: Optional[SessionData] = None
+    if current_session_id:
+        session_data = get_session(current_session_id)
+        if not session_data:
+            logger.warning(f"Session ID {current_session_id} provided, but no active session found. Treating as new.")
+            current_session_id = None
 
-            if retrieved_session_data and retrieved_session_data.conversation_step == "awaiting_clarification_response":
-                logger.info(f"Valid session found for {current_session_id}. Processing clarification response.")
-                proceed_as_new_question = False
+    try:
+        if session_data and user_question.selected_option_id:
+            logger.info(f"Processing selection for session {current_session_id}, option: {user_question.selected_option_id}, type: {session_data.clarification_type}")
+            original_query_for_processing = session_data.original_question
 
-                original_question_text = retrieved_session_data.original_question
-                # initial_search_results from session are now List of Chunks/Pages
-                search_results_from_session = retrieved_session_data.initial_search_results
+            if session_data.clarification_type == "space_selection":
+                session_data.selected_space_key = user_question.selected_option_id
+                session_data.conversation_step = "processing_space_selection"
+                logger.info(f"Session {current_session_id}: Space '{session_data.selected_space_key}' selected.")
+                save_session(current_session_id, session_data)
 
-                refined_search_results = []
-                if user_question.selected_option_id:
-                    logger.info(f"User selected option ID: {user_question.selected_option_id}")
-                    # The selected_option_id corresponds to a page_id
-                    for chunk_or_page in search_results_from_session:
-                        if chunk_or_page.get("page_id") == user_question.selected_option_id:
-                            refined_search_results.append(chunk_or_page)
-                    if refined_search_results:
-                         logger.info(f"Prioritizing results for page_id: {user_question.selected_option_id}. Found {len(refined_search_results)} related items.")
-                    else:
-                        logger.warning(f"Selected option page_id {user_question.selected_option_id} not found in session's search results. Using all session results.")
-                        refined_search_results = search_results_from_session # Fallback
-                else:
-                    logger.info("No specific option ID selected, or free-text response (not fully supported). Using all results from session.")
-                    refined_search_results = search_results_from_session # Fallback
-
-                search_terms_from_session = retrieved_session_data.extracted_terms
+            elif session_data.clarification_type == "document_selection":
+                logger.info(f"Session {current_session_id}: Document ID '{user_question.selected_option_id}' selected for answer.")
+                search_results_from_session = session_data.initial_search_results or []
+                refined_search_results = [res for res in search_results_from_session if res.get("page_id") == user_question.selected_option_id]
+                if not refined_search_results:
+                    logger.warning(f"Selected document {user_question.selected_option_id} not found in session results for {current_session_id}. Using all.")
+                    refined_search_results = search_results_from_session
                 context_for_gemini, unique_source_urls = _build_context_from_search_results(
-                    refined_search_results, # This is now a list of chunks/pages
-                    search_terms_from_session.get("phrases", []),
-                    search_terms_from_session.get("keywords", []),
-                    max_context_length
-                )
-
-                if not context_for_gemini or context_for_gemini.startswith("No se encontró información"):
-                     logger.warning(f"Context for Gemini is empty or default after clarification for session {current_session_id}.")
-                     context_for_gemini = "Aunque intentamos aclarar, no se encontró información específica en Confluence para su consulta refinada."
-
-                ai_answer = gemini_service.generate_response(original_question_text, context_for_gemini)
-                delete_session(current_session_id)
-                logger.info(f"Session {current_session_id} deleted after processing clarification.")
-                return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
-
-            else: # Session issue, treat as new
-                if retrieved_session_data:
-                    logger.warning(f"Session {current_session_id} found, but not awaiting clarification (step: {retrieved_session_data.conversation_step}). Treating as new question.")
-                    delete_session(current_session_id)
+                    refined_search_results, session_data.extracted_terms.get("phrases", []),
+                    session_data.extracted_terms.get("keywords", []), max_context_length)
+                ai_answer = gemini_service.generate_response(original_query_for_processing, context_for_gemini)
+                remaining_topics_options = []
+                if session_data.initial_search_results:
+                    seen_page_ids = {user_question.selected_option_id}
+                    for item in session_data.initial_search_results:
+                        if item.get("page_id") and item.get("page_id") not in seen_page_ids:
+                            remaining_topics_options.append({"id": item["page_id"], "text": item.get("title", "Tema relacionado")})
+                            seen_page_ids.add(item["page_id"])
+                            if len(remaining_topics_options) >= 3: break
+                if remaining_topics_options:
+                    session_data.clarification_type = "related_topics_followup"
+                    session_data.conversation_step = "awaiting_related_topic_choice"
+                    session_data.clarification_options_provided = remaining_topics_options
+                    save_session(current_session_id, session_data)
+                    return ChatResponse(
+                        answer=ai_answer, source_urls=unique_source_urls, session_id=current_session_id,
+                        needs_clarification=True,
+                        clarification_question_text="Aquí está tu respuesta. ¿Te gustaría explorar alguno de estos temas relacionados o hacer una nueva pregunta?",
+                        clarification_options=[{"id": opt["id"], "text": opt["text"]} for opt in remaining_topics_options] + [{"id": "new_query", "text": "Hacer una nueva pregunta"}],
+                        clarification_type="related_topics_followup")
                 else:
-                    logger.warning(f"Session ID {current_session_id} provided by user, but no active session found. Treating as new question.")
+                    delete_session(current_session_id)
+                    return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
 
-        # B. Handling New Question (or if follow-up processing decided to treat as new)
-        if proceed_as_new_question:
-            logger.info(f"Processing as new question: {user_question.question}")
-            extracted_terms = extract_search_terms(user_question.question)
-            extracted_space_keys = extract_space_keys_from_query(user_question.question)
-
-            N_SEMANTIC_RESULTS = 5
-            N_CQL_RESULTS = 3
+            elif session_data.clarification_type == "broaden_search_scope":
+                selected_broaden_option = user_question.selected_option_id
+                if selected_broaden_option == "search_all":
+                    session_data.selected_space_key = None
+                    session_data.conversation_step = "processing_broad_search"
+                    logger.info(f"Session {current_session_id}: Broadening search to all spaces.")
+                    save_session(current_session_id, session_data)
+                elif selected_broaden_option == "select_other_space":
+                    if not session_data.available_spaces:
+                         session_data.available_spaces = [{"id": sp["id"], "text": sp["text"]} for sp in confluence_service.get_available_spaces()]
+                    session_data.clarification_type = "space_selection"
+                    session_data.conversation_step = "awaiting_space_selection"
+                    session_data.selected_space_key = None
+                    save_session(current_session_id, session_data)
+                    return ChatResponse(
+                        answer="", needs_clarification=True, session_id=current_session_id,
+                        clarification_question_text="Por favor, elige el espacio de Confluence donde te gustaría buscar:",
+                        clarification_options=[{"id": sp["id"], "text": sp["text"]} for sp in session_data.available_spaces or []],
+                        clarification_type="space_selection")
+                elif selected_broaden_option == "new_query":
+                    delete_session(current_session_id)
+                    current_session_id = None
+                    session_data = None
+                else: # "cancel" or unknown
+                    delete_session(current_session_id)
+                    return ChatResponse(answer="Entendido. Si tienes otra pregunta, no dudes en consultarme.", session_id=None)
             
-            logger.info(f"Performing semantic search for: {user_question.question}")
-            semantic_chunks = confluence_service.semantic_search_chunks(
-                query_text=user_question.question,
-                top_k=N_SEMANTIC_RESULTS
-            )
+            elif session_data.clarification_type == "related_topics_followup":
+                if user_question.selected_option_id == "new_query":
+                    delete_session(current_session_id)
+                    current_session_id = None
+                    session_data = None
+                else:
+                    page_id_for_related_topic = user_question.selected_option_id
+                    logger.info(f"Session {current_session_id}: User selected related topic ID '{page_id_for_related_topic}'.")
+                    page_content = confluence_service.get_page_content_by_id(page_id_for_related_topic)
+                    page_title = "este tema"
+                    page_url = ""
+                    if session_data.clarification_options_provided:
+                        for opt in session_data.clarification_options_provided:
+                            if opt["id"] == page_id_for_related_topic:
+                                page_title = opt["text"]; break
+                    if session_data.initial_search_results:
+                        for res in session_data.initial_search_results:
+                            if res.get("page_id") == page_id_for_related_topic:
+                                page_url = res.get("url", "")
+                                if page_title == "este tema" and res.get("title"): page_title = res.get("title")
+                                break
+                    context_for_gemini = f"Contexto de la página '{page_title}' (URL: {page_url if page_url else 'N/A'}):\n{page_content}"
+                    ai_answer = gemini_service.generate_response(f"Proporciona información detallada sobre {page_title}", context_for_gemini)
+                    delete_session(current_session_id)
+                    return ChatResponse(answer=ai_answer, source_urls=[page_url] if page_url else [], session_id=None)
+            else:
+                logger.warning(f"Session {current_session_id} in unknown state: {session_data.clarification_type}, {session_data.conversation_step}. Treating as new.")
+                if current_session_id: delete_session(current_session_id)
+                current_session_id = None; session_data = None
 
-            logger.info(f"Performing keyword search with terms: {extracted_terms}, space_keys: {extracted_space_keys}")
+        if not current_session_id or \
+           (session_data and session_data.conversation_step in ["processing_space_selection", "processing_broad_search"]):
+            if not current_session_id:
+                logger.info(f"Processing as new question: {original_query_from_user}")
+                current_session_id = create_new_session_id()
+                available_spaces_raw = confluence_service.get_available_spaces()
+                available_spaces_for_session = [{"id": sp["id"], "text": sp["text"]} for sp in available_spaces_raw]
+
+                session_data = SessionData(
+                    original_question=original_query_from_user, extracted_terms={}, initial_search_results=[],
+                    available_spaces=available_spaces_for_session, clarification_type="space_selection",
+                    conversation_step="awaiting_space_selection", timestamp=time.time())
+                save_session(current_session_id, session_data)
+                return ChatResponse(
+                    answer="", needs_clarification=True, session_id=current_session_id,
+                    clarification_question_text="Hola! Soy Conrad. Para ayudarte mejor, por favor, elige el espacio de Confluence donde te gustaría buscar:",
+                    clarification_options=available_spaces_for_session, clarification_type="space_selection")
+
+            original_query_for_processing = session_data.original_question
+            current_selected_space_key = session_data.selected_space_key
+            logger.info(f"Session {current_session_id}: Performing search. Query: '{original_query_for_processing}', Space: {current_selected_space_key if current_selected_space_key else 'ALL'}")
+            extracted_terms = extract_search_terms(original_query_for_processing)
+            session_data.extracted_terms = extracted_terms
+            semantic_chunks = confluence_service.semantic_search_chunks(query_text=original_query_for_processing, top_k=settings.N_SEMANTIC_RESULTS)
             keyword_pages = confluence_service.search_content(
-                search_terms=extracted_terms,
-                space_keys=extracted_space_keys if extracted_space_keys else None,
-                limit=N_CQL_RESULTS
-            )
+                search_terms=extracted_terms, space_keys=[current_selected_space_key] if current_selected_space_key else None,
+                limit=settings.N_CQL_RESULTS)
 
-            # --- Hybrid Search: Combine and Deduplicate ---
-            combined_results = []
+            combined_results_for_ranking = []
             processed_page_urls_from_semantic = set()
-
             for chunk in semantic_chunks:
-                combined_results.append({
-                    "text": chunk["text"], "url": chunk["url"], "title": chunk["title"],
-                    "score": chunk["score"], "search_method": "semantic", # L2 distance, lower is better
-                    "context_hierarchy": chunk.get("context_hierarchy", chunk["title"]),
-                    "page_id": chunk.get("page_id")
-                })
-                if chunk["url"]:
-                    processed_page_urls_from_semantic.add(chunk["url"])
-
+                combined_results_for_ranking.append({
+                    "text": chunk["text"], "url": chunk["url"], "title": chunk["title"], "score": chunk["score"],
+                    "search_method": "semantic", "context_hierarchy": chunk.get("context_hierarchy", chunk["title"]),
+                    "page_id": chunk.get("page_id")})
+                if chunk["url"]: processed_page_urls_from_semantic.add(chunk["url"])
             for page in keyword_pages:
                 if page["url"] not in processed_page_urls_from_semantic:
-                    logger.info(f"Fetching content for keyword-matched page: {page['title']} (ID: {page['id']})")
                     page_content_full = confluence_service.get_page_content_by_id(page['id'])
                     if page_content_full:
-                        combined_results.append({
-                            "text": page_content_full, "url": page["url"], "title": page["title"],
-                            "score": 1000.0, "search_method": "keyword_page", # Default high L2 score
-                            "context_hierarchy": page["title"], "page_id": page['id']
-                        })
-                    else:
-                        logger.warning(f"Could not fetch content for keyword-matched page ID: {page['id']}")
-                else:
-                    logger.info(f"Page {page['url']} from keyword search already covered by semantic chunks. Skipping.")
-
-            # Initial sort: L2 distance (lower is better) for semantic, keyword pages have high L2.
-            combined_results.sort(key=lambda x: x.get("score", float('inf')))
-
-            # --- Re-ranking with Cross-Encoder ---
-            K_CANDIDATES_FOR_RERANKING = 25
-            candidates_to_rerank = combined_results[:K_CANDIDATES_FOR_RERANKING]
-
-            if cross_encoder and candidates_to_rerank:
-                logger.info(f"Re-ranking top {len(candidates_to_rerank)} candidates with Cross-Encoder...")
-                query_chunk_pairs = []
-                for candidate in candidates_to_rerank:
-                    text_for_reranking = candidate.get("text", "")
-                    MAX_TEXT_LEN_FOR_CROSS_ENCODER = 2000
+                        combined_results_for_ranking.append({
+                            "text": page_content_full, "url": page["url"], "title": page["title"], "score": 1000.0,
+                            "search_method": "keyword_page", "context_hierarchy": page["title"], "page_id": page['id']})
+            combined_results_for_ranking.sort(key=lambda x: x.get("score", float('inf')))
+            reranked_search_results = combined_results_for_ranking
+            if cross_encoder and combined_results_for_ranking:
+                MAX_TEXT_LEN_FOR_CROSS_ENCODER = 2000
+                pairs = []
+                candidates_for_reranking = combined_results_for_ranking[:settings.K_CANDIDATES_FOR_RERANKING]
+                for res in candidates_for_reranking:
+                    text_for_reranking = res.get("text","")
                     if len(text_for_reranking) > MAX_TEXT_LEN_FOR_CROSS_ENCODER:
                         text_for_reranking = text_for_reranking[:MAX_TEXT_LEN_FOR_CROSS_ENCODER]
-                    query_chunk_pairs.append((user_question.question, text_for_reranking))
-
-                if query_chunk_pairs:
+                    pairs.append((original_query_for_processing, text_for_reranking))
+                if pairs:
                     try:
-                        cross_encoder_scores = cross_encoder.predict(query_chunk_pairs, show_progress_bar=False)
-
-                        for i, candidate in enumerate(candidates_to_rerank):
-                            candidate["score"] = float(cross_encoder_scores[i]) # New score, higher is better
-                            candidate["search_method"] = "hybrid_reranked"
-
-                        # Sort by new cross-encoder score, higher is better
-                        candidates_to_rerank.sort(key=lambda x: x.get("score", float('-inf')), reverse=True)
-                        logger.info(f"Re-ranking complete. Top candidate score: {candidates_to_rerank[0]['score'] if candidates_to_rerank else 'N/A'}")
-                        initial_search_results = candidates_to_rerank
-                    except Exception as e:
-                        logger.error(f"Error during Cross-Encoder prediction: {e}", exc_info=True)
-                        initial_search_results = candidates_to_rerank # Fallback to initially sorted top K
-                else:
-                    initial_search_results = candidates_to_rerank
-            else:
-                initial_search_results = candidates_to_rerank # Use top K from L2 sort if no cross_encoder or no candidates
-
-            # Append remaining non-reranked results if K_CANDIDATES_FOR_RERANKING was less than total combined_results
-            # These results are still sorted by their original L2 scores or have default high L2 for keyword.
-            if len(combined_results) > len(initial_search_results):
-                 remaining_results = combined_results[len(initial_search_results):]
-                 initial_search_results.extend(remaining_results)
-
-            # Ensure overall list is still somewhat reasonably sized for context building
-            MAX_RESULTS_FOR_CONTEXT = K_CANDIDATES_FOR_RERANKING + 10 # Example: Keep more than just reranked pool
-            initial_search_results = initial_search_results[:MAX_RESULTS_FOR_CONTEXT]
-            # --- End Re-ranking ---
-
-            if initial_search_results:
-                # Attempt to generate clarification questions
-                # Pass the user_question.question (string) and the gemini_service instance
-                # Pass initial_search_results which are the combined, reranked (or sorted) list of chunks/pages
-                clarification_details = generate_clarification_from_results(
-                    initial_search_results,
-                    user_question.question,
-                    gemini_service  # Pass the global gemini_service instance
-                )
-
-                if clarification_details:
-                    logger.info(f"Clarification details generated: {clarification_details}")
-                    new_session_id = create_new_session_id()
-                    logger.info(f"Clarification needed. Creating new session: {new_session_id}")
-
-                    session_to_save = SessionData(
-                        original_question=user_question.question,
-                        extracted_terms=extracted_terms,
-                        initial_search_results=initial_search_results, # Store combined_results (chunks/pages)
-                        clarification_question_asked=clarification_details["question_text"],
-                        clarification_options_provided=clarification_details["options"],
-                        conversation_step="awaiting_clarification_response",
-                        timestamp=time.time()
-                    )
-                    save_session(new_session_id, session_to_save)
-
-                    response_for_clarification = ChatResponse(
-                        answer="",
-                        session_id=new_session_id,
-                        needs_clarification=True,
-                        clarification_question_text=clarification_details["question_text"],
-                        clarification_options=clarification_details["options"]
-                    )
-                    logger.info(f"Returning ChatResponse for clarification: {response_for_clarification.model_dump_json(indent=2)}")
-                    return response_for_clarification
-
-            # If no clarification needed, or no search results, proceed to generate response directly
-            context_for_gemini, unique_source_urls = _build_context_from_search_results(
-                initial_search_results if initial_search_results else [], # Pass combined_results
-                extracted_terms.get("phrases", []),
-                extracted_terms.get("keywords", []),
-                max_context_length
-            )
+                        scores = cross_encoder.predict(pairs, show_progress_bar=False)
+                        for idx, res in enumerate(candidates_for_reranking):
+                            res["score"] = float(scores[idx]); res["search_method"] = "hybrid_reranked"
+                        candidates_for_reranking.sort(key=lambda x: x.get("score", float('-inf')), reverse=True)
+                        reranked_search_results = candidates_for_reranking + combined_results_for_ranking[settings.K_CANDIDATES_FOR_RERANKING:]
+                    except Exception as e_rerank: logger.error(f"Cross-Encoder error: {e_rerank}", exc_info=True)
             
-            ai_answer = gemini_service.generate_response(user_question.question, context_for_gemini)
-            return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
+            current_initial_search_results = reranked_search_results[:settings.MAX_RESULTS_FOR_CONTEXT]
+            session_data.initial_search_results = current_initial_search_results
+            save_session(current_session_id, session_data)
 
-    # Fallback for any logic error
+            if not current_initial_search_results:
+                logger.info(f"Session {current_session_id}: No results (Space: {current_selected_space_key}). Offering broaden.")
+                session_data.conversation_step = "awaiting_broaden_search_choice"
+                session_data.clarification_type = "broaden_search_scope"
+                save_session(current_session_id, session_data)
+                clarif_q_text = f"No encontré resultados para '{original_query_for_processing[:30]}...' en '{current_selected_space_key if current_selected_space_key else 'Todos los espacios'}'. ¿Quieres probar otras opciones?"
+                clarif_opts = []
+                if current_selected_space_key : clarif_opts.append({"id": "search_all", "text": "Buscar en todos los espacios"})
+                # Corrected: broaden options after no results in a specific space
+                clarif_opts.extend([
+                    {"id": "select_other_space", "text": "Elegir otro espacio"},
+                    {"id": "new_query", "text": "Hacer nueva consulta"}, # Allow new query
+                    {"id": "cancel", "text": "No, gracias"}
+                ])
+                # Corrected logic for "already searched all"
+                # Check if current_selected_space_key is None (meaning "search_all" was attempted)
+                # AND the conversation_step that led here was "processing_broad_search" (or about to be "awaiting_broaden_search_choice" from such a state)
+                if not current_selected_space_key:
+                     clarif_q_text = f"No encontré resultados para '{original_query_for_processing[:30]}...' incluso buscando en todos los espacios. ¿Nueva consulta o elegir espacio?"
+                     clarif_opts = [
+                         {"id": "new_query", "text": "Nueva consulta"},
+                         {"id": "select_other_space", "text": "Elegir un espacio específico"},
+                         {"id": "cancel", "text": "No, gracias"}
+                     ]
+                return ChatResponse(answer="", needs_clarification=True, session_id=current_session_id,
+                    clarification_question_text=clarif_q_text, clarification_options=clarif_opts, clarification_type="broaden_search_scope")
+
+            clarification_details = generate_clarification_from_results(current_initial_search_results, original_query_for_processing, gemini_service)
+            if clarification_details:
+                logger.info(f"Session {current_session_id}: Document clarification needed.")
+                session_data.conversation_step = "awaiting_clarification_response"
+                session_data.clarification_type = "document_selection"
+                session_data.clarification_question_asked = clarification_details["question_text"]
+                session_data.clarification_options_provided = clarification_details["options"]
+                save_session(current_session_id, session_data)
+                return ChatResponse(answer="", needs_clarification=True, session_id=current_session_id,
+                    clarification_question_text=clarification_details["question_text"],
+                    clarification_options=clarification_details["options"], clarification_type="document_selection")
+
+            logger.info(f"Session {current_session_id}: Proceeding to direct answer.")
+            context_for_gemini, unique_source_urls = _build_context_from_search_results(
+                current_initial_search_results, extracted_terms.get("phrases", []),
+                extracted_terms.get("keywords", []), max_context_length)
+            ai_answer = gemini_service.generate_response(original_query_for_processing, context_for_gemini)
+            delete_session(current_session_id)
+            return ChatResponse(answer=ai_answer, source_urls=unique_source_urls, session_id=None)
+        else:
+            logger.error(f"Session {current_session_id if current_session_id else 'None'} in unhandled state: {session_data.conversation_step if session_data else 'No session data'}. Error.")
+            if current_session_id: delete_session(current_session_id)
+            raise HTTPException(status_code=500, detail="Error de estado de la conversación.")
     except HTTPException as http_exc:
+        logger.error(f"HTTPException in /chat for session {current_session_id if current_session_id else 'None'}: {http_exc.detail}", exc_info=True)
         raise http_exc
     except Exception as e:
-        logger.error(f"An unexpected error occurred in /chat: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error interno del servidor.")
+        logger.error(f"Unexpected error in /chat for session {current_session_id if current_session_id else 'None'}: {e}", exc_info=True)
+        if current_session_id: delete_session(current_session_id)
+        raise HTTPException(status_code=500, detail="Error interno del servidor durante el chat.")
 
 # Helper function to consolidate context building logic
 def _build_context_from_search_results(
