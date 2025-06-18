@@ -58,11 +58,13 @@ function toggleSidebar() {
         sidebarIframe.style.display = 'block'; // Make it part of layout before transform
         // Force a reflow before applying the transform for the transition to work on first show
         void sidebarIframe.offsetHeight;
-        
-        // Defer style changes that trigger transition
+
+        // Defer style changes that trigger transition to ensure display:block is processed
         setTimeout(() => {
-            sidebarIframe.style.transform = 'translateX(0%)';
-            sidebarIframe.style.opacity = '1';
+            if (sidebarIframe) { // Ensure sidebarIframe still exists in this async callback
+                sidebarIframe.style.transform = 'translateX(0%)';
+                sidebarIframe.style.opacity = '1';
+
         }, 10); // 10ms delay
     }
     isSidebarVisible = !isSidebarVisible;
