@@ -1,3 +1,7 @@
+html {
+  height: 100%;
+}
+
 /* General Body Styling */
 body.popup-body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -5,10 +9,10 @@ body.popup-body {
   padding: 0; /* Removed fixed padding, handled by chat-container */
   background-color: var(--bg-color);
   color: var(--text-color);
-  width: 350px; /* Default width for the popup */
+  width: 100%; /* Default width for the popup */
   display: flex; /* Use flexbox for main layout */
   flex-direction: column; /* Stack chat container and input area vertically */
-  max-height: 500px; /* Max height for the popup, helps with scroll */
+  height: 100%; /* Changed from max-height for sidebar */ /* Max height for the popup, helps with scroll */
   overflow: hidden; /* Prevent body itself from scrolling */
 }
 
@@ -274,14 +278,17 @@ a:hover {
 /* Clarification Options Styling */
 #clarification-options-container {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start; /* Align buttons to the left like Conrad messages */
+  flex-wrap: wrap; /* Allow buttons to wrap */
+  justify-content: flex-start; /* Align to start */
+  /* align-items: flex-start; removed or keep if needed for single line */
   margin-top: 10px;
   margin-bottom: 10px;
   gap: 8px; /* Adds space between option buttons */
 }
 
 .clarification-option {
+  flex-grow: 0;
+  flex-shrink: 0;
   background-color: var(--conrad-message-bg); /* Uses Conrad's background */
   color: var(--conrad-message-text);           /* Uses Conrad's text color */
   border: 1px solid var(--border-color);       /* Subtle border */
