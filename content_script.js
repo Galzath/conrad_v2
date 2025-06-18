@@ -58,8 +58,12 @@ function toggleSidebar() {
         sidebarIframe.style.display = 'block'; // Make it part of layout before transform
         // Force a reflow before applying the transform for the transition to work on first show
         void sidebarIframe.offsetHeight;
-        sidebarIframe.style.transform = 'translateX(0%)';
-        sidebarIframe.style.opacity = '1';
+        
+        // Defer style changes that trigger transition
+        setTimeout(() => {
+            sidebarIframe.style.transform = 'translateX(0%)';
+            sidebarIframe.style.opacity = '1';
+        }, 10); // 10ms delay
     }
     isSidebarVisible = !isSidebarVisible;
     console.log("Conrad Sidebar: Visibility toggled. New state:", isSidebarVisible);
