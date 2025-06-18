@@ -64,7 +64,7 @@ function toggleSidebar() {
             if (sidebarIframe) { // Ensure sidebarIframe still exists in this async callback
                 sidebarIframe.style.transform = 'translateX(0%)';
                 sidebarIframe.style.opacity = '1';
-            }
+
         }, 10); // 10ms delay
     }
     isSidebarVisible = !isSidebarVisible;
