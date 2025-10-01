@@ -11,8 +11,31 @@ from ..core.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class ConfluenceService:
+    """
+    A service to interact with Confluence, providing both standard and semantic search.
+
+    This class handles the connection to a Confluence instance and provides
+    methods for searching content using Confluence's query language (CQL) as
+    well as performing semantic searches on a pre-built FAISS index of
+    Confluence page content.
+
+    Attributes:
+        confluence: An instance of the `atlassian.Confluence` client.
+        faiss_index: A loaded FAISS index for semantic search.
+        chunk_metadata: A list of metadata corresponding to the vectors in the FAISS index.
+        embedding_model_for_query: A SentenceTransformer model for embedding user queries.
+    """
     def __init__(self):
+        """
+        Initializes the ConfluenceService.
+
+        Sets up the connection to the Confluence API using credentials from
+        settings. It also loads the FAISS index, chunk metadata, and the
+        embedding model required for semantic search from the paths specified
+        in the application settings.
+        """
         try:
             self.confluence = Confluence(
                 url=settings.CONFLUENCE_URL,
@@ -53,6 +76,18 @@ class ConfluenceService:
             self.embedding_model_for_query = None
 
     def _execute_cql_query(self, cql: str, limit: int) -> list[dict]:
+        """
+        Executes a given CQL query against the Confluence API.
+
+        Args:
+            cql: The Confluence Query Language (CQL) string to execute.
+            limit: The maximum number of results to return.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a
+            search result containing the page ID, title, and URL. Returns an
+            empty list if the search fails or yields no results.
+        """
         if not self.confluence:
             logger.error("Confluence client not initialized. Cannot execute CQL query.")
             return []
@@ -77,6 +112,23 @@ class ConfluenceService:
             return []
 
     def search_content(self, search_terms: dict, space_keys: list[str] = None, limit: int = 5) -> list[dict]:
+        """
+        Searches Confluence content using a combination of phrases and keywords.
+
+        This method first attempts a precise search using multi-word phrases.
+        If that yields no results, it falls back to a broader search using
+        individual keywords.
+
+        Args:
+            search_terms: A dictionary containing "phrases" and "keywords"
+                          extracted from the user's query.
+            space_keys: An optional list of Confluence space keys to restrict
+                        the search to.
+            limit: The maximum number of results to return.
+
+        Returns:
+            A list of search result dictionaries.
+        """
         if not self.confluence:
             logger.error("Confluence client not initialized. Cannot perform search.")
             return []
@@ -165,6 +217,16 @@ class ConfluenceService:
         return results
 
     def get_page_content_by_id(self, page_id: str) -> str:
+        """
+        Retrieves and cleans the content of a specific Confluence page.
+
+        Args:
+            page_id: The ID of the Confluence page to retrieve.
+
+        Returns:
+            The cleaned text content of the page, with HTML tags removed.
+            Returns an empty string if the page cannot be fetched or has no content.
+        """
         if not self.confluence:
             logger.error("Confluence client not initialized. Cannot get page content.")
             return ""
@@ -181,6 +243,16 @@ class ConfluenceService:
         return ""
 
     def get_available_spaces(self, limit: int = 200) -> list[dict]:
+        """
+        Fetches a list of available spaces from Confluence.
+
+        Args:
+            limit: The maximum number of spaces to fetch.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a space
+            and contains the space "id" (key) and "text" (name).
+        """
         if not self.confluence:
             logger.error("Confluence client not initialized. Cannot get available spaces.")
             return []
@@ -206,6 +278,23 @@ class ConfluenceService:
             return []
 
     def semantic_search_chunks(self, query_text: str, top_k: int = 5) -> list[dict]:
+        """
+        Performs semantic search using a FAISS index to find relevant text chunks.
+
+        This method takes a user query, embeds it using a sentence transformer model,
+        and then searches the FAISS index for the most similar text chunks based
+        on vector similarity (L2 distance).
+
+        Args:
+            query_text: The user's query string.
+            top_k: The number of top results to retrieve from the index.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a found chunk
+            and includes metadata such as page ID, title, URL, text snippet, and
+            the search score. Returns an empty list if the search cannot be
+            performed or yields no results.
+        """
         if not self.faiss_index or not self.chunk_metadata or not self.embedding_model_for_query or self.faiss_index.ntotal == 0:
             logger.info("Semantic search components not available or index is empty. Skipping semantic search.")
             return []

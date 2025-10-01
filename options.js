@@ -1,4 +1,7 @@
-// Ensure DOM elements are queried after DOMContentLoaded
+/**
+ * Toggles the 'dark-mode' class on the document body based on user preference.
+ * @param {boolean} isDarkMode - True to enable dark mode, false to disable it.
+ */
 let darkModeToggle;
 
 function applyDarkModePreference(isDarkMode) {
@@ -9,6 +12,12 @@ function applyDarkModePreference(isDarkMode) {
     }
 }
 
+/**
+ * Saves the user's settings from the options form to `chrome.storage.local`.
+ * This includes Confluence and Gemini credentials, and the dark mode preference.
+ * It also provides visual feedback to the user on success or failure.
+ * @param {Event} e - The form submission event.
+ */
 function saveOptions(e) {
     e.preventDefault();
     const confluenceUrl = document.getElementById('confluence-url').value;
@@ -56,6 +65,10 @@ function saveOptions(e) {
     });
 }
 
+/**
+ * Loads the user's saved settings from `chrome.storage.local` and populates the form fields.
+ * It also applies the saved dark mode preference to the page.
+ */
 function loadOptions() {
     // Get references to all settings fields, including the new dark mode toggle
     const confluenceUrlInput = document.getElementById('confluence-url');

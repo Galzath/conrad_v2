@@ -1,4 +1,12 @@
 # conrad_backend/app/main.py
+"""
+Main FastAPI application for the Conrad Chatbot backend.
+
+This module sets up the FastAPI application, including CORS middleware,
+and defines the primary chat endpoint for handling user interactions.
+It integrates services for Confluence, Gemini, and session management
+to provide a conversational interface for querying a Confluence knowledge base.
+"""
 
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
@@ -60,6 +68,21 @@ KNOWN_SPACE_KEYWORDS = {"M2": "M2", "SGP": "SGP", "SF": "SF"}
 SPACE_KEY_PATTERN = re.compile(r'\b(' + '|'.join(re.escape(key) for key in KNOWN_SPACE_KEYWORDS.keys()) + r')\b', re.IGNORECASE)
 
 def extract_search_terms(question: str) -> dict:
+    """
+    Extracts keywords and phrases from the user's question for search queries.
+
+    This function performs basic natural language processing to identify potential
+    search terms, including individual keywords (excluding stop words) and
+    multi-word phrases that might represent specific concepts or proper nouns.
+
+    Args:
+        question: The user's question as a string.
+
+    Returns:
+        A dictionary containing two keys:
+        - "keywords": A list of single-word search terms.
+        - "phrases": A list of multi-word search phrases.
+    """
     # ... Lógica sin cambios ...
     # Omitido por brevedad
     normalized_question_for_keywords = question.lower()
@@ -96,7 +119,22 @@ def extract_search_terms(question: str) -> dict:
 
 ## NUEVO: Función dedicada a la búsqueda y ranking
 def _perform_retrieval_and_ranking(query: str, space_key: Optional[str]) -> List[Dict[str, Any]]:
-    """Realiza búsqueda híbrida (semántica + keyword) y re-rankea los resultados."""
+    """
+    Performs a hybrid search and re-ranks the results.
+
+    This function combines semantic search with keyword-based search (CQL) to
+    retrieve relevant documents from Confluence. The combined results are then
+    re-ranked using a CrossEncoder model to improve relevance.
+
+    Args:
+        query: The user's search query.
+        space_key: The specific Confluence space to search within. If None,
+                   the search may be broader depending on the underlying service configuration.
+
+    Returns:
+        A list of dictionaries, where each dictionary represents a search result,
+        sorted by relevance score.
+    """
     extracted_terms = extract_search_terms(query)
     
     # Búsqueda
@@ -147,7 +185,21 @@ def _perform_retrieval_and_ranking(query: str, space_key: Optional[str]) -> List
 
 ## NUEVO: Función para generar opciones de clarificación
 def _generate_clarification_options(search_results: List[Dict[str, Any]], query: str) -> Optional[Dict[str, Any]]:
-    """Genera opciones de clarificación si los resultados son ambiguos."""
+    """
+    Generates clarification options if the search results are ambiguous.
+
+    If the search results point to multiple distinct documents, this function
+    creates a list of choices for the user to select from, helping to narrow
+    down the focus of their query.
+
+    Args:
+        search_results: A list of search result dictionaries.
+        query: The original user query, used for context in the clarification question.
+
+    Returns:
+        A dictionary containing the clarification question and options, or None
+        if clarification is not needed.
+    """
     if len(search_results) < 2:
         return None
 
@@ -175,7 +227,21 @@ def _generate_clarification_options(search_results: List[Dict[str, Any]], query:
 
 ## NUEVO: Función para construir el contexto para Gemini
 def _build_context_for_llm(search_results: List[Dict[str, Any]]) -> Tuple[str, List[str]]:
-    """Construye el string de contexto y la lista de URLs de las fuentes."""
+    """
+    Constructs the context string and source URL list for the language model.
+
+    This function aggregates text snippets from the top search results to form
+    a single context string that will be passed to the language model (Gemini).
+    It also collects the unique source URLs for citation.
+
+    Args:
+        search_results: A list of ranked search result dictionaries.
+
+    Returns:
+        A tuple containing:
+        - The combined context string.
+        - A sorted list of unique source URLs.
+    """
     context_parts = []
     source_urls = set()
     current_length = 0
@@ -205,7 +271,28 @@ def _build_context_for_llm(search_results: List[Dict[str, Any]]) -> Tuple[str, L
 # --- Endpoint Principal de Chat ---
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(user_question: UserQuestion = Body(...)):
-    """Punto de entrada principal para todas las interacciones de chat."""
+    """
+    Main entry point for all chat interactions.
+
+    This endpoint manages the conversation flow. It handles new conversations
+    by first asking the user to select a Confluence space. For existing
+    conversations, it processes user selections (e.g., clarifying which
+    document they're interested in) and ultimately generates a final answer
+    by querying the language model with the retrieved context.
+
+    Args:
+        user_question: A `UserQuestion` object containing the user's input,
+                       and potentially a session ID and a selected option ID
+                       for multi-turn conversations.
+
+    Raises:
+        HTTPException: If the conversation state is invalid or an
+                       unexpected payload is received.
+
+    Returns:
+        A `ChatResponse` object containing either the final answer, a
+        clarification question, or an initial space selection prompt.
+    """
     logger.info(f"Payload recibido: {user_question.model_dump_json(indent=2)}")
 
     session_id = user_question.session_id

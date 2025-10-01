@@ -1,9 +1,23 @@
+"""
+Application-wide configuration settings.
+
+This module loads configuration variables from environment variables or a .env file.
+It centralizes all configurable parameters, making it easy to manage different
+deployment environments (development, production, etc.).
+"""
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Settings:
+    """
+    Holds all configuration settings for the application.
+
+    Attributes are loaded from environment variables, with sensible defaults provided
+    for development. This includes credentials for external services, model names,
+    search parameters, and file paths for indexing.
+    """
     # --- Configuración de Conexiones ---
     CONFLUENCE_URL: str = os.getenv("CONFLUENCE_URL", "YOUR_CONFLUENCE_URL_HERE")
     CONFLUENCE_USERNAME: str = os.getenv("CONFLUENCE_USERNAME", "YOUR_CONFLUENCE_USERNAME")
