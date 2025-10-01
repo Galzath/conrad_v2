@@ -1,3 +1,8 @@
+/**
+ * Initializes the popup's functionality when the DOM is fully loaded.
+ * This includes setting up event listeners, loading chat history,
+ * and preparing the UI for user interaction.
+ */
 document.addEventListener('DOMContentLoaded', () => {
     console.log("Popup DOMContentLoaded: Script starting.");
     const messageInput = document.getElementById('message-input');
@@ -23,7 +28,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-// Saves the current chat history to chrome.storage.session
+/**
+ * Saves the current chat history to chrome.storage.session.
+ * This function serializes the chatHistory array and stores it,
+ * logging success or failure messages.
+ */
 function saveChatHistory() {
     console.log("saveChatHistory: Attempting to save to chrome.storage.session. Current chatHistory:", JSON.parse(JSON.stringify(chatHistory)));
     try {
@@ -42,7 +51,12 @@ function saveChatHistory() {
     }
 }
 
-    // Renders a message to the chat DOM
+    /**
+     * Renders a single message to the chat DOM, including its text and any associated source URLs.
+     * @param {string} text - The text content of the message.
+     * @param {string} sender - The sender of the message ('user' or 'conrad').
+     * @param {string[]} [sourceUrls=[]] - An array of source URLs to be displayed with the message.
+     */
     function renderMessage(text, sender, sourceUrls = []) {
         const messageDiv = document.createElement('div');
         messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'conrad-message');
@@ -68,7 +82,12 @@ function saveChatHistory() {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    // Adds a message to chat history, renders it, and saves history
+    /**
+     * Adds a message to the chat history, renders it in the UI, and saves the updated history.
+     * @param {string} text - The text content of the message.
+     * @param {string} sender - The sender of the message ('user' or 'conrad').
+     * @param {string[]} [sourceUrls=[]] - An array of source URLs associated with the message.
+     */
     function addMessageToChat(text, sender, sourceUrls = []) {
         console.log("addMessageToChat: Adding message:", {text, sender});
         chatHistory.push({ text, sender, sourceUrls });
@@ -82,7 +101,10 @@ function saveChatHistory() {
         }
     }
 
-    // Loads chat history from chrome.storage.session and renders it
+    /**
+     * Loads chat history from `chrome.storage.session`, renders it in the chat window,
+     * and then calls `handleHistoryLoadingFinished` to perform any post-loading actions.
+     */
 function loadChatHistory() {
     console.log("loadChatHistory: Attempting to load history from chrome.storage.session.");
 
@@ -126,7 +148,11 @@ function loadChatHistory() {
     });
 }
 
-// This function consolidates what happens after chat history is loaded or initialized
+/**
+ * Finalizes the UI setup after chat history has been loaded.
+ * If the chat is empty, it displays a welcome message or a configuration prompt.
+ * It also ensures the message input field is focused for immediate use.
+ */
 function handleHistoryLoadingFinished() {
     console.log("handleHistoryLoadingFinished: Chat history loading process complete. Current history length:", chatHistory.length);
 
@@ -169,7 +195,14 @@ function handleHistoryLoadingFinished() {
 
     loadChatHistory();
 
-    // Implements the UI for clarification questions
+    /**
+     * Displays a clarification question and a set of options for the user to choose from.
+     * This function disables the main input field and presents clickable buttons for each option.
+     * @param {string} questionText - The clarification question to display.
+     * @param {Array<Object>} options - An array of option objects, each with 'text' and 'id'.
+     * @param {string} sessionId - The current chat session ID.
+     * @param {string} originalQuery - The user's original query that prompted the clarification.
+     */
     function displayClarificationUI(questionText, options, sessionId, originalQuery) {
         console.log("displayClarificationUI called with:", questionText, options, sessionId, originalQuery);
         console.log("Received options for display:", JSON.stringify(options, null, 2));
@@ -240,7 +273,14 @@ function handleHistoryLoadingFinished() {
         }
     }
 
-    // Handles the user's selection from the clarification options
+    /**
+     * Handles the user's selection from the clarification options.
+     * It sends the selected option to the backend and processes the response,
+     * which could be a direct answer or another clarification request.
+     * @param {string} selectedOptionId - The ID of the option selected by the user.
+     * @param {string} sessionId - The current chat session ID.
+     * @param {string} originalQuery - The user's original query.
+     */
     async function handleClarificationSelection(selectedOptionId, sessionId, originalQuery) {
         console.log("handleClarificationSelection called with:", selectedOptionId, sessionId, originalQuery);
         // Optional: Show what was selected to the user.
@@ -310,7 +350,12 @@ function handleHistoryLoadingFinished() {
         }
     }
 
-    // Displays a direct answer from Conrad in the chat.
+    /**
+     * Displays a direct answer from Conrad in the chat, including source URLs.
+     * It also ensures any leftover clarification UI is cleaned up.
+     * @param {string} answerText - The answer text to display.
+     * @param {string[]} sourceUrls - An array of source URLs to accompany the answer.
+     */
     function displayDirectAnswer(answerText, sourceUrls) {
         // Log for debugging (optional)
         console.log("Displaying direct answer:", answerText, "Sources:", sourceUrls);

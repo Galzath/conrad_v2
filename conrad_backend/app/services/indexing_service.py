@@ -17,7 +17,25 @@ logger = logging.getLogger(__name__)
 # ... (El resto de la clase IndexingService, como _get_text_from_element, _split_text_semantically, etc., permanece igual) ...
 # ... (Se omite por brevedad, ya que no hay cambios en esas funciones) ...
 class IndexingService:
+    """
+    Handles the creation and management of the search index.
+
+    This service is responsible for fetching content from Confluence,
+    processing it into structured text chunks, generating vector embeddings
+    for these chunks, and building a FAISS index for efficient semantic search.
+
+    Attributes:
+        confluence_service: An instance of ConfluenceService to interact with Confluence.
+        embedding_model: A SentenceTransformer model for generating embeddings.
+    """
     def __init__(self):
+        """
+        Initializes the IndexingService.
+
+        Sets up the required services, such as the ConfluenceService, and
+        loads the sentence transformer model specified in the settings. It also
+        ensures that necessary NLTK components are downloaded.
+        """
         try:
             self.confluence_service = ConfluenceService()
             if not self.confluence_service.confluence:
@@ -40,6 +58,19 @@ class IndexingService:
             self.embedding_model = None
 
     def _get_text_from_element(self, element) -> str:
+        """
+        Extracts clean text from a BeautifulSoup element, with special handling for different tags.
+
+        This method intelligently extracts text from various HTML elements like tables,
+        code blocks, lists, and headers, preserving their structure as much as
+        possible in the text representation.
+
+        Args:
+            element: A BeautifulSoup element to process.
+
+        Returns:
+            A string containing the cleaned and structured text from the element.
+        """
         texts = []
         if element.name == 'table':
             for row_idx, row in enumerate(element.find_all('tr', recursive=False)):
@@ -92,6 +123,23 @@ class IndexingService:
         return element.get_text(separator=' ', strip=True)
 
     def _split_text_semantically(self, text_block: str, similarity_threshold: float = 0.6, min_chunk_sentences: int = 2, max_chunk_sentences: int = 10) -> list[str]:
+        """
+        Splits a block of text into semantically coherent chunks.
+
+        This method uses sentence embeddings to determine where to split the text,
+        grouping sentences that are semantically related. This is more effective
+        than fixed-size chunking for preserving context.
+
+        Args:
+            text_block: The block of text to be split.
+            similarity_threshold: The cosine similarity threshold below which a
+                                  split will occur.
+            min_chunk_sentences: The minimum number of sentences a chunk should have.
+            max_chunk_sentences: The maximum number of sentences a chunk can have.
+
+        Returns:
+            A list of strings, where each string is a semantically coherent chunk of text.
+        """
         try:
             sentences = sent_tokenize(text_block)
         except Exception as e:
@@ -136,6 +184,28 @@ class IndexingService:
         return semantic_chunks
 
     def extract_structured_chunks(self, page_id: str, page_title: str, page_url: str, page_html_content: str, chunk_size: int = 500, chunk_overlap: int = 50) -> list[dict]:
+        """
+        Extracts structured text chunks from the HTML content of a Confluence page.
+
+        This method parses the HTML, identifies meaningful content blocks
+        (like paragraphs, tables, lists, code blocks), and then splits these
+        blocks into smaller chunks suitable for embedding. It attempts to use
+        semantic splitting where appropriate, falling back to fixed-size chunking.
+
+        Args:
+            page_id: The ID of the Confluence page.
+            page_title: The title of the page, used for context.
+            page_url: The URL of the page.
+            page_html_content: The raw HTML string of the page body.
+            chunk_size: The target maximum size of each text chunk in characters.
+            chunk_overlap: The character overlap between consecutive chunks from
+                           the same block of text.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a chunk
+            and contains its text and associated metadata (page ID, title, URL,
+            and context hierarchy).
+        """
         chunks = []
         if not page_html_content:
             return chunks
@@ -395,3 +465,18 @@ class IndexingService:
             logger.info(f"Chunk metadata successfully saved to {settings.CHUNKS_DATA_PATH}")
         except Exception as e:
             logger.error(f"Error saving chunk metadata: {e}", exc_info=True)
+
+if __name__ == "__main__":
+    logger.info("Starting the indexing process from command line...")
+    try:
+        # This allows running the script directly to perform indexing.
+        # Ensure your .env file is correctly configured before running.
+        indexing_service = IndexingService()
+        if indexing_service.confluence_service and indexing_service.embedding_model:
+            logger.info("IndexingService initialized. Building and saving index...")
+            indexing_service.build_and_save_index()
+            logger.info("Indexing process completed successfully.")
+        else:
+            logger.error("IndexingService could not be initialized due to configuration or connection errors. Aborting.")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during the indexing process: {e}", exc_info=True)

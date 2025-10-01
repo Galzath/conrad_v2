@@ -1,3 +1,10 @@
+"""
+In-memory session management for multi-turn conversations.
+
+This module provides a simple in-memory key-value store to manage the state
+of ongoing conversations. It is not suitable for production environments
+with multiple server instances but works well for single-instance deployments.
+"""
 import time
 import uuid
 from typing import Optional, Dict, Any, List
@@ -6,59 +13,103 @@ from pydantic import BaseModel
 # Global dictionary to store active sessions
 active_sessions: Dict[str, 'SessionData'] = {}
 
+
 class SessionData(BaseModel):
+    """
+    Represents the state of a single user conversation session.
+
+    Attributes:
+        original_question: The initial question that started the conversation.
+        extracted_terms: Keywords and phrases extracted from the original question.
+        initial_search_results: The first set of search results retrieved.
+        available_spaces: A list of Confluence spaces offered to the user.
+        selected_space_key: The space key the user selected.
+        clarification_type: The type of clarification currently being handled.
+        clarification_question_asked: The text of the clarification question asked.
+        clarification_options_provided: The options provided for clarification.
+        conversation_step: The current stage of the conversation flow (e.g., 'awaiting_space_selection').
+        timestamp: The epoch timestamp of the last update to this session.
+    """
     original_question: str
-    # Using Dict[str, List[str]] for extracted_terms to match previous usage,
-    # e.g., {"keywords": ["kw1", "kw2"], "phrases": ["phrase1"]}
     extracted_terms: Dict[str, List[str]]
-    # Using List[Dict[str, Any]] for search results, allowing flexibility for various keys like id, title, url
     initial_search_results: List[Dict[str, Any]]
-    available_spaces: Optional[List[Dict[str, str]]] = None # Spaces offered for selection
-    selected_space_key: Optional[str] = None      # Space key chosen by user
-    clarification_type: Optional[str] = None      # Type of current clarification (e.g., space_selection)
+    available_spaces: Optional[List[Dict[str, str]]] = None
+    selected_space_key: Optional[str] = None
+    clarification_type: Optional[str] = None
     clarification_question_asked: Optional[str] = None
-    # Using List[Dict[str, str]] for clarification options as specified, e.g., [{"id": "opt1", "text": "Option 1"}]
     clarification_options_provided: Optional[List[Dict[str, str]]] = None
-    conversation_step: str  # e.g., "awaiting_clarification_response", "processing_complete"
-    timestamp: float       # Store creation/update time for potential cleanup
+    conversation_step: str
+    timestamp: float
+
 
 def create_new_session_id() -> str:
-    """Generates a new unique session ID."""
+    """
+    Generates a new, unique session ID.
+
+    Returns:
+        A string representing a new UUID version 4.
+    """
     return str(uuid.uuid4())
+
 
 def save_session(session_id: str, data: SessionData) -> None:
     """
-    Saves the provided SessionData object into the active_sessions dictionary.
-    The timestamp in the data will be updated upon saving.
+    Saves or updates a session in the in-memory store.
+
+    The session's timestamp is automatically updated to the current time
+    upon saving.
+
+    Args:
+        session_id: The unique ID for the session.
+        data: The `SessionData` object to save.
     """
-    data.timestamp = time.time() # Update timestamp on save
+    data.timestamp = time.time()
     active_sessions[session_id] = data
-    print(f"Session saved: {session_id}, Step: {data.conversation_step}") # Basic logging
+    print(f"Session saved: {session_id}, Step: {data.conversation_step}")
+
 
 def get_session(session_id: str) -> Optional[SessionData]:
     """
-    Retrieves SessionData from active_sessions.
-    Returns None if session_id is not found.
+    Retrieves a session from the in-memory store.
+
+    Args:
+        session_id: The ID of the session to retrieve.
+
+    Returns:
+        The `SessionData` object if found, otherwise None.
     """
     session = active_sessions.get(session_id)
     if session:
-        print(f"Session retrieved: {session_id}, Step: {session.conversation_step}") # Basic logging
+        print(f"Session retrieved: {session_id}, Step: {session.conversation_step}")
     else:
-        print(f"Session not found: {session_id}") # Basic logging
+        print(f"Session not found: {session_id}")
     return session
 
+
 def delete_session(session_id: str) -> None:
-    """Removes a session from active_sessions if it exists."""
+    """
+    Removes a session from the in-memory store.
+
+    Args:
+        session_id: The ID of the session to delete.
+    """
     if session_id in active_sessions:
         del active_sessions[session_id]
-        print(f"Session deleted: {session_id}") # Basic logging
+        print(f"Session deleted: {session_id}")
     else:
-        print(f"Session not found for deletion: {session_id}") # Basic logging
+        print(f"Session not found for deletion: {session_id}")
+
 
 def cleanup_old_sessions(max_age_seconds: int = 3600) -> None:
     """
-    Iterates through active_sessions and removes any session older than
-    max_age_seconds based on its timestamp.
+    Removes sessions that have not been updated for a specified duration.
+
+    This function is useful for preventing the in-memory store from growing
+    indefinitely with stale sessions.
+
+    Args:
+        max_age_seconds: The maximum age of a session in seconds. Sessions
+                         older than this will be removed.
     """
     current_time = time.time()
     sessions_to_delete = [

@@ -6,8 +6,27 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class GeminiService:
+    """
+    A service to interact with the Google Gemini API for generating text.
+
+    This class handles the configuration and initialization of the Gemini model.
+    It provides methods to generate responses to user questions based on a
+    provided context and to create concise summaries for clarification purposes.
+
+    Attributes:
+        model: An instance of the `genai.GenerativeModel` used for text generation.
+    """
     def __init__(self):
+        """
+        Initializes the GeminiService.
+
+        Configures the Gemini API with the key from settings and initializes
+        the generative model. If the API key is not configured, an error is
+        logged, and the model attribute is set to None.
+        """
+        model_name_to_use = 'gemini-1.5-flash-latest'
         try:
             if not settings.GEMINI_API_KEY or "YOUR_GEMINI_API_KEY" in settings.GEMINI_API_KEY:
                 logger.error("Gemini API Key not configured. Please set it in .env or environment variables.")
@@ -19,7 +38,6 @@ class GeminiService:
             # Set the model permanently based on user selection from the list.
             # The previous step (listing models) used 'gemini-1.5-flash-latest' as the trial model
             # after the list was printed. User confirms this choice.
-            model_name_to_use = 'gemini-1.5-flash-latest'
 
             self.model = genai.GenerativeModel(model_name_to_use)
             logger.info(f"Successfully configured Gemini API and initialized the model: '{model_name_to_use}'.")
@@ -31,6 +49,22 @@ class GeminiService:
             self.model = None
 
     def generate_response(self, user_question: str, confluence_context: str) -> str:
+        """
+        Generates a response to a user's question using the provided context.
+
+        This method constructs a detailed prompt for the Gemini model, instructing
+        it to answer the user's question strictly based on the provided
+        Confluence context.
+
+        Args:
+            user_question: The user's question.
+            confluence_context: The context retrieved from Confluence, which the
+                              model should use to answer the question.
+
+        Returns:
+            A string containing the generated answer. If an error occurs or the
+            model cannot generate a response, an error message is returned.
+        """
         if not self.model:
             logger.error("Gemini model not initialized. Cannot generate response.")
             return "Error: The AI model is currently unavailable. Please try again later."
@@ -88,6 +122,21 @@ A continuación, se presenta el contexto recuperado de Confluence. Cada fragment
             return "Error: An unexpected issue occurred while trying to communicate with the AI model."
 
     def generate_clarification_summary(self, user_query: str, page_chunk_texts: str, max_length_chars: int = 150) -> str:
+        """
+        Generates a concise summary of a text chunk for use as a clarification option.
+
+        This is used to create a short, descriptive label for a button when
+        the user needs to choose between multiple ambiguous search results.
+
+        Args:
+            user_query: The original user query, for context.
+            page_chunk_texts: The text from a Confluence page chunk to be summarized.
+            max_length_chars: The maximum character length for the final summary.
+
+        Returns:
+            A short, descriptive string summarizing the text, or a fallback
+            message if the summary cannot be generated.
+        """
         if not self.model:
             logger.error("Gemini model not initialized. Cannot generate clarification summary.")
             return "No se pudo generar un resumen." # Fallback text
